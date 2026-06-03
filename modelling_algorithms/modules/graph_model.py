@@ -24,10 +24,7 @@ def create_graph(
 
     pmus = []
     for i in range(1, num_pmus + 1):
-        if i == 4:
-            pmus.append("PMU8")
-        else:
-            pmus.append(f"PMU{i}")
+        pmus.append(f"PMU{i}")
     for p in pmus:
         G.add_node(p, role="PMU", data_rate=100, status="online")
 

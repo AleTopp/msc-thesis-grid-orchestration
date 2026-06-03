@@ -1,0 +1,76 @@
+from _resiliency import place_pdcs_resiliently, prefix_tree_from_pmu_paths, vec_idx_from_pmu_name
+from placement_pdc import place_pdcs_greedy
+from graph_model import create_graph
+from visualizer import draw_graph
+import networkx as nx
+import numpy as np
+import re
+
+def main():
+    MAX_LAT = 500
+    N, M = 4, 4
+    R = build_simple_R(N, M)
+    v = np.ones((N+M, 1), dtype=int)
+
+    G = create_graph(seed=4, num_pmus=N+M, num_candidates=2*(N+M))
+    set_simple_red_role(G, R)
+    
+    pos = None
+    try:
+        pos = nx.nx_pydot.pydot_layout(G, prog="dot")
+    except:
+        pos = nx.spring_layout(G, seed=42)
+
+    (pdcs, pmu_paths, _) = place_pdcs_greedy(G, max_latency=MAX_LAT, flag_splitting=False)
+    draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.0-graph-dario.png", pos=pos)
+    T = build_tree(pmu_paths, R)
+    draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.0-tree-dario.png", view_mode=3)
+
+    (pdcs, pmu_paths) = place_pdcs_resiliently(G, max_latency=MAX_LAT, essentialPMUs=N, v=v, R=R)
+    draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.1-graph-resilient.png", pos=pos)
+    T = build_tree(pmu_paths, R)
+    draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.1-tree-resilient.png", view_mode=3)
+
+
+def build_simple_R(N: int, M: int):
+    top    = np.hstack([np.zeros((N, N)), np.eye(N, M)])
+    bottom = np.hstack([np.eye(M, N), np.zeros((M, M))])
+    return np.vstack([top, bottom])
+
+def build_tree(pmu_paths, R) -> nx.DiGraph:
+    T = prefix_tree_from_pmu_paths(pmu_paths)
+    set_simple_red_role(T, R)
+    return T
+
+def set_simple_red_role(G: nx.Graph, R):
+    for n, d in G.nodes(data=True):
+        if not re.match(r"[r]?PMU(\d+)", n):
+            if d.get("role", "candidate") != "PMU":
+                continue
+        
+        i = vec_idx_from_pmu_name(n)
+        
+        r_of = d.get("r_of", [])
+        for j in range(i+1, R.shape[0]):
+            if R[i, j] == 1:
+                r_of.append(f"PMU{j+1}")
+        
+        d["r_of"] = r_of
+
+def find_seed():
+    N, M = 4, 4
+    
+    for i in range(1000):
+        G = create_graph(seed=i, num_pmus=N+M, num_candidates=2*(N+M))
+        
+        links = 0
+        for n in G:
+            links += G.number_of_edges("CC", n)
+            
+        if links > 4:
+            continue
+        
+        print(f"FOUND. Seed: {i}")
+
+if __name__ == "__main__":
+    main()
