@@ -1,6 +1,25 @@
 import networkx as nx
 import random
 
+LABEL_CC = "CC"
+LABEL_PMU = lambda i : f"PMU{i}"
+LABEL_CANDIDATE = lambda i : f"N{i}"
+NODE_ROLE = "role"
+ROLE_CC = "CC"
+ROLE_PMU = "PMU"
+ROLE_CANDIDATE = "candidate"
+NODE_LATENCY = "processing"
+NODE_STATUS = "status"
+NODE_STATUS_ONLINE = "online"
+NODE_STATUS_OFFLINE = "offline"
+NODE_DATARATE = "data_rate"
+EDGE_LATENCY = "latency"
+EDGE_STATUS_ONLINE = "up"
+EDGE_STATUS_OFFLINE = "down"
+EDGE_BANDWIDTH = "bandwidth"
+
+DEFAULT_NODE_LATENCY = 21.5
+
 def create_graph(
     num_candidates=8,
     num_pmus=4,
@@ -16,17 +35,38 @@ def create_graph(
     G = nx.Graph()
 
     # --- nodes ---
-    G.add_node("CC", role="CC", processing=21.5, status="online")
+    G.add_node(
+        LABEL_CC,
+        **{
+            NODE_ROLE: ROLE_CC,
+            NODE_LATENCY: DEFAULT_NODE_LATENCY,
+            NODE_STATUS: NODE_STATUS_ONLINE
+        }
+    )
 
-    candidates = [f"N{i}" for i in range(1, num_candidates + 1)]
+    candidates = [LABEL_CANDIDATE(i) for i in range(1, num_candidates + 1)]
     for n in candidates:
-        G.add_node(n, role="candidate", processing=21.5, status="online")
+        G.add_node(
+            n,
+            **{
+                NODE_ROLE: ROLE_CANDIDATE,
+                NODE_LATENCY: DEFAULT_NODE_LATENCY,
+                NODE_STATUS: NODE_STATUS_ONLINE
+            }
+        )
 
     pmus = []
     for i in range(1, num_pmus + 1):
-        pmus.append(f"PMU{i}")
+        pmus.append(LABEL_PMU(i))
     for p in pmus:
-        G.add_node(p, role="PMU", data_rate=100, status="online")
+        G.add_node(
+            p,
+            **{
+                NODE_ROLE: ROLE_PMU,
+                NODE_DATARATE: 100, 
+                NODE_STATUS: NODE_STATUS_ONLINE
+            }
+        )
 
     # helper to add an edge with random latency and default bandwidth/status
     def add_edge(u, v):
@@ -34,9 +74,11 @@ def create_graph(
             return
         G.add_edge(
             u, v,
-            latency=round(random.uniform(1, 3), 2),
-            bandwidth=400,
-            status="up"
+            **{
+                EDGE_LATENCY: round(random.uniform(1, 3), 2),
+                EDGE_BANDWIDTH: 400,
+                NODE_STATUS: EDGE_STATUS_ONLINE,
+            }
         )
 
     # --- 1) Subgraph ---
@@ -62,7 +104,7 @@ def create_graph(
 
     k = random.randint(cc_min_links, cc_max_links)
     for n in random.sample(candidates, k):
-        add_edge("CC", n)
+        add_edge(LABEL_CC, n)
 
     # --- 3) Link PMUs to candidates ---
     pmu_links = max(1, min(pmu_links, num_candidates))
@@ -83,7 +125,7 @@ def modify_latency(G):
     while True:
         print("\n🔗 Actually latency:")
         for u, v, data in G.edges(data=True):
-            print(f"{u} – {v}: {data['latency']} ms")
+            print(f"{u} – {v}: {data[EDGE_LATENCY]} ms")
 
         risposta = input("\nDo you want to modify a latency? (y/n): ").lower()
         if risposta != "y":
@@ -94,9 +136,9 @@ def modify_latency(G):
 
         if G.has_edge(u, v):
             try:
-                before = float(G[u][v].get("latency"))
+                before = float(G[u][v].get(EDGE_LATENCY))
                 nuova_latenza = float(input(f"Enter new latency for edge {u}–{v}: "))
-                G[u][v]["latency"] = nuova_latenza
+                G[u][v][EDGE_LATENCY] = nuova_latenza
                 print(f"✔️ Latency updated for {u}–{v} to {nuova_latenza} ms.")
 
                 uu, vv = _edge_key(u, v)
@@ -127,7 +169,7 @@ def modify_edge_status(G):
     while True:
         print("\n🔗 Current edge statuses:")
         for u, v, data in G.edges(data=True):
-            print(f"{u} – {v}: {data['status']}")
+            print(f"{u} – {v}: {data[NODE_STATUS]}")
 
         risposta = input("\nDo you want to modify the status of an edge? (y/n): ").lower()
         if risposta != "y":
@@ -137,10 +179,10 @@ def modify_edge_status(G):
         v = input("Node 2: ").strip()
 
         if G.has_edge(u, v):
-            before = str(G[u][v].get("status"))
+            before = str(G[u][v].get(NODE_STATUS))
             nuovo_stato = input(f"Enter new status for edge {u}–{v} (up/down): ").strip().lower()
-            if nuovo_stato in ["up", "down"]:
-                G[u][v]["status"] = nuovo_stato
+            if nuovo_stato in [EDGE_STATUS_ONLINE, EDGE_STATUS_OFFLINE]:
+                G[u][v][NODE_STATUS] = nuovo_stato
                 print(f"✔️ Status updated for {u}–{v} to {nuovo_stato}.")
 
                 uu, vv = _edge_key(u, v)
@@ -166,7 +208,7 @@ def modify_bandwidth(G):
     while True:
         print("\n🔗 Current bandwidths:")
         for u, v, data in G.edges(data=True):
-            print(f"{u} – {v}: {data['bandwidth']} kbps")
+            print(f"{u} – {v}: {data[EDGE_BANDWIDTH]} kbps")
 
         risposta = input("\nDo you want to modify a bandwidth? (y/n): ").lower()
         if risposta != "y":
@@ -177,9 +219,9 @@ def modify_bandwidth(G):
 
         if G.has_edge(u, v):
             try:
-                before = float(G[u][v].get("bandwidth"))
+                before = float(G[u][v].get(EDGE_BANDWIDTH))
                 nuova_bandwidth = float(input(f"Enter new bandwidth for edge {u}–{v}: "))
-                G[u][v]["bandwidth"] = nuova_bandwidth
+                G[u][v][EDGE_BANDWIDTH] = nuova_bandwidth
                 print(f"✔️ Bandwidth updated for {u}–{v} to {nuova_bandwidth} kbps.")
 
                 uu, vv = _edge_key(u, v)
