@@ -218,10 +218,6 @@ def choose(
 
   # Valuto le latenze fino a ognuno dei nodi del livello attuale
   for node in nodes:
-    # Se non è tra i path, vuol dire che è stato tagliato fuori per il constraint sulla latenza
-    if node not in paths.keys():
-      continue
-
     # Se non è un candidato o un PDC, non va bene
     if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) != ROLE_CANDIDATE:
       continue
