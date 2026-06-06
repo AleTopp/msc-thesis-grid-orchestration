@@ -45,17 +45,19 @@ def main():
 
   # ---- NEW ----
   PMUs = [f"PMU{i}" for i in range(1, NUM_ePMU + 1)]
+  rPMUs = [f"rPMU{NUM_ePMU + j + 1}-({j + 1})" for j in range(0, NUM_ePMU)]
+  PMUs.extend(rPMUs)
+  
   for j in range(0, NUM_ePMU): #(nuovi rPMU)
     # Posiziona casualmente il PMU (ovvero collega casualmente a un nodo)
-    rPMU = f"rPMU{NUM_ePMU + j + 1}-({j + 1})"
+    rPMU = rPMUs[j]
     G.add_node(rPMU, **{ NODE_ROLE: ROLE_PMU })
     for n in random.sample([n for n, d in G.nodes(data=True) if d.get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_CANDIDATE], RPMU_LINKS):
       add_edge(rPMU, n)
-    PMUs.append(rPMU)
     
     # Riempiamo la matrice di ridondanza
-    R[j][NUM_ePMU+j] = 1/2
-    R[NUM_ePMU+j][j] = 1/2
+    R[j][NUM_ePMU+j] = 1
+    R[NUM_ePMU+j][j] = 1
     
     # Scegliamo il percorso migliore dal punto di vista dell'osservabilità
     # scendendo lungo l'albero creato dall'algoritmo di Dario
@@ -64,14 +66,17 @@ def main():
         G, 
         T, 
         PMUs, 
-        rpmu=PMUs[NUM_ePMU+j], 
+        rpmu=rPMU, 
         nodes=list(T.successors(LABEL_CC)), 
-        neighbor=list(G.neighbors(LABEL_CC)), 
+        neighbors=list(G.neighbors(LABEL_CC)), 
+        v=np.ones((2*NUM_ePMU, 1), dtype=int),
         R=R,
         max_latency=LATENCY_THRESHOLD,
-        parent_latency=math.inf)
-      pmu_paths[rPMU] = {"path": [LABEL_CC, *path], "delay": float(0)} # TODO: Set delay?
-      print(f"{rPMU}: {pmu_paths[rPMU]["path"]}")
+        parent_latency=nx.shortest_path_length(G, source=rPMU, target=LABEL_CC, weight=setup_calc_edge_weight(G, src=rPMU)),
+      )
+      path = [LABEL_CC, *path]
+      pmu_paths[rPMU] = {"path": path, "delay": calc_path_cost(G, path)} # TODO: Set delay?
+      print(f"{rPMU}: {path}")
     except ValueError as e:
       print(e)
   
@@ -157,7 +162,7 @@ def place_pdcs_resiliently(
         v=v, 
         R=R, 
         max_latency=max_latency,
-        parent_latency=math.inf, 
+        parent_latency=nx.shortest_path_length(G, source=rpmu, target=LABEL_CC, weight=setup_calc_edge_weight(G, src=rpmu)),
         debug=debug
       )
       path = list(reversed([LABEL_CC, *path]))
