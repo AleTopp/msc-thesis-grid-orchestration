@@ -13,7 +13,15 @@ colors = [
     "purple", "darkorange", "deeppink", "teal", "brown"
 ]
 
-def draw_graph(G: nx.Graph | nx.DiGraph, pdcs=None, paths=None, max_latency=None, output_path: Path | None = None, pos = None, view_mode: int = 1):
+def draw_graph(
+    G: nx.Graph | nx.DiGraph, 
+    pdcs: set = None, 
+    paths : dict[str, list | float] = None, 
+    max_latency: float = None, 
+    output_path: Path | None = None, 
+    pos = None, 
+    view_mode: int = 1
+):
     if pdcs is None:
         pdcs = set()
 

@@ -1,4 +1,4 @@
-from graph_model import create_graph
+from graph_model import EDGE_BANDWIDTH, EDGE_LATENCY, EDGE_STATUS_ONLINE, LABEL_CC, NODE_LATENCY, NODE_ROLE, NODE_STATUS, ROLE_CANDIDATE, ROLE_PMU, create_graph
 from visualizer import draw_graph
 from placement_pdc import place_pdcs_greedy
 from operator import itemgetter
@@ -18,9 +18,11 @@ def main():
       return
     G.add_edge(
       u, v,
-      latency=round(random.uniform(1, 3), 2),
-      bandwidth=400,
-      status="up"
+      **{
+        EDGE_LATENCY: round(random.uniform(1, 3), 2),
+        EDGE_BANDWIDTH: 400,
+        NODE_STATUS: EDGE_STATUS_ONLINE,
+      }
     )
 
   # ---- SETUP ----
@@ -46,8 +48,8 @@ def main():
   for j in range(0, NUM_ePMU): #(nuovi rPMU)
     # Posiziona casualmente il PMU (ovvero collega casualmente a un nodo)
     rPMU = f"rPMU{NUM_ePMU + j + 1}-({j + 1})"
-    G.add_node(rPMU, role="PMU")
-    for n in random.sample([n for n, d in G.nodes(data=True) if d.get("role", "candidate") == "candidate"], RPMU_LINKS):
+    G.add_node(rPMU, **{ NODE_ROLE: ROLE_PMU })
+    for n in random.sample([n for n, d in G.nodes(data=True) if d.get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_CANDIDATE], RPMU_LINKS):
       add_edge(rPMU, n)
     PMUs.append(rPMU)
     
@@ -58,8 +60,17 @@ def main():
     # Scegliamo il percorso migliore dal punto di vista dell'osservabilità
     # scendendo lungo l'albero creato dall'algoritmo di Dario
     try:
-      path = choose(G, T, PMUs, PMUs[NUM_ePMU+j], list(T.successors("CC")), list(G.neighbors("CC")), math.inf)
-      pmu_paths[rPMU] = {"path": ["CC", *path], "delay": float(0)} # TODO: Set delay?
+      path = choose(
+        G, 
+        T, 
+        PMUs, 
+        rpmu=PMUs[NUM_ePMU+j], 
+        nodes=list(T.successors(LABEL_CC)), 
+        neighbor=list(G.neighbors(LABEL_CC)), 
+        R=R,
+        max_latency=LATENCY_THRESHOLD,
+        parent_latency=math.inf)
+      pmu_paths[rPMU] = {"path": [LABEL_CC, *path], "delay": float(0)} # TODO: Set delay?
       print(f"{rPMU}: {pmu_paths[rPMU]["path"]}")
     except ValueError as e:
       print(e)
@@ -91,13 +102,20 @@ def main():
     only_paths = {epmu: data_e, rpmu: data_r}
     draw_graph(G, pdcs, only_paths, output_path=f"output/4.{j}-graph-resilient.png", pos=pos)
 
-def place_pdcs_resiliently(G: nx.Graph, max_latency: int, essentialPMUs: list[str] | int, v, R, debug: bool = False):
+def place_pdcs_resiliently(
+  G: nx.Graph, 
+  max_latency: float, 
+  essentialPMUs: list[str] | int, 
+  v, 
+  R, 
+  debug: bool = False
+):
   PMUs = []
   ePMUs = []
   rPMUs = []
   
   for n, data in G.nodes(data=True):
-    if data.get("role", "candidate") == "PMU":
+    if data.get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_PMU:
       PMUs.append(n)
       
   if len(PMUs) == 0:
@@ -129,30 +147,44 @@ def place_pdcs_resiliently(G: nx.Graph, max_latency: int, essentialPMUs: list[st
 
   for rpmu in rPMUs:
     try:
-      path = choose(G, T, PMUs, rpmu, list(T.successors("CC")), list(G.neighbors("CC")), v, R, math.inf, debug=debug)
-      path = list(reversed(["CC", *path]))
+      path = choose(
+        G, 
+        T, 
+        PMUs, 
+        rpmu=rpmu, 
+        nodes=list(T.successors(LABEL_CC)), 
+        neighbors=list(G.neighbors(LABEL_CC)), 
+        v=v, 
+        R=R, 
+        max_latency=max_latency,
+        parent_latency=math.inf, 
+        debug=debug
+      )
+      path = list(reversed([LABEL_CC, *path]))
       pmu_paths[rpmu] = {"path": path, "delay": calc_path_cost(G, path)}
       if debug:
         print(f"{rpmu}: {path}")
       
       for node in path:
-        if G.nodes[node].get("role", "candidate") == "candidate":
+        if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_CANDIDATE:
           pdcs.add(node)
     except ValueError as e:
       print(e)
 
   return pdcs, pmu_paths
 
-def choose(G: nx.Graph, 
-           T: nx.DiGraph, 
-           PMUs: list[str], 
-           rpmu: str, 
-           nodes: list[str], 
-           neighbors: list[str], 
-           v,
-           R,
-           parent_latency: float = math.inf,
-           debug: bool = False,
+def choose(
+  G: nx.Graph, 
+  T: nx.DiGraph, 
+  PMUs: list[str], 
+  rpmu: str, 
+  nodes: list[str], 
+  neighbors: list[str], 
+  v,
+  R,
+  max_latency: float = LATENCY_THRESHOLD,
+  parent_latency: float = math.inf,
+  debug: bool = False,
 ):
   # Se è direttamente collegato al padre (il nodo chiamante) ho trovato percorso
   # (Caso base della ricorsione)
@@ -160,7 +192,12 @@ def choose(G: nx.Graph,
     return [rpmu]
   
   # Calcolo percorsi con Dijkstra da PMUs[i] a tutti gli altri nodi
-  costs, paths = nx.multi_source_dijkstra(G, sources={rpmu}, weight="latency", cutoff=LATENCY_THRESHOLD)
+  costs, paths = nx.multi_source_dijkstra(
+    G, 
+    sources={rpmu}, 
+    weight=setup_calc_edge_weight(G, src=rpmu), 
+    cutoff=max_latency
+  )
 
   # Caso limite (percorso non trovato)
   if len(nodes) == 0:
@@ -175,16 +212,12 @@ def choose(G: nx.Graph,
       continue
 
     # Se non è un candidato o un PDC, non va bene
-    if G.nodes[node].get("role", "candidate") != "candidate":
+    if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) != ROLE_CANDIDATE:
       continue
 
     # Latenza da PMUs[i] al node
     latency = costs[node]
 
-    # TODO: Quello che si potrebbe fare è non escludere se è più grande
-    #    ma se è più grande di un % ad esempio, allora l'osservabilità mi 
-    #    farebbe perdere in termini di latenza, e non mi sta bene.
-    #    ---> Chiedere a RSE
     # Consideriamo solo i figli che hanno latenza minore rispetto al padre
     if latency > parent_latency:
       # Passare per il padre (o attraverso un altro figlio) sarebbe meglio
@@ -194,12 +227,16 @@ def choose(G: nx.Graph,
     # e calcoliamo la sua variazione tra prima e dopo aver aggiunto questo rPMU
     coeff_con_pmu = calc_coeff_v2(get_x_from_node(node, T, PMUs, rpmu), v, R)
     coeff_senza = calc_coeff_v2(get_x_from_node(node, T, PMUs), v, R)
-    delta_rel = (coeff_con_pmu - coeff_senza) / coeff_senza
+    if coeff_senza == 0:
+      delta_rel = math.inf
+    else:
+      delta_rel = (coeff_con_pmu - coeff_senza) / coeff_senza
+      
     if debug:
       print(f"rho({node}): {coeff_senza} -> {coeff_con_pmu} ({delta_rel})")
 
     # Salviamo il risultato tra i nodi validi
-    valid_nodes.append((delta_rel, node, costs[node]))
+    valid_nodes.append((delta_rel, node, latency))
 
   # Consideriamo in ordine le migliori variazioni (relative) del coefficiente di osservabilità,
   # e la PMU sarà associata a quel nodo.
@@ -212,7 +249,17 @@ def choose(G: nx.Graph,
       # Cerchiamo ricorsivamente il percorso tra i figli del nodo (nell'albero)
       if debug:
         print(f"Provo {node} sulla via per {rpmu}.")
-      best_path = choose(G, T, PMUs, rpmu, list(T.successors(node)), G.neighbors(node), v, R, cost, debug=debug)
+      best_path = choose(
+        G, 
+        T, 
+        PMUs, 
+        rpmu=rpmu, 
+        nodes=list(T.successors(node)), 
+        neighbors=list(G.neighbors(node)), 
+        v=v, 
+        R=R, 
+        parent_latency=cost, 
+        debug=debug)
       break
     except:
       # Se ha fallito la ricorsione
@@ -236,7 +283,7 @@ def choose(G: nx.Graph,
 
 def pmu_by_node(node: str, T: nx.DiGraph, PMUs: list[str]) -> list[str]:
   T2 = T.copy()
-  T2.remove_node("CC")
+  T2.remove_node(LABEL_CC)
 
   reachable = []
   for pmu in PMUs:
@@ -297,7 +344,7 @@ def prefix_tree_from_pmu_paths(pmu_paths: dict[str, dict[str, list[str] | float]
   rev_paths = [list(reversed(val["path"])) for val in pmu_paths.values()]
   return my_prefix_tree(rev_paths)
 
-def my_prefix_tree(paths: list, root = "CC") -> nx.DiGraph:
+def my_prefix_tree(paths: list, root = LABEL_CC) -> nx.DiGraph:
   def get_children(paths):
     children: dict[types.Any, list] = {}
     # Populate dictionary with key(s) as the child/children of the root and
@@ -336,9 +383,25 @@ def my_prefix_tree(paths: list, root = "CC") -> nx.DiGraph:
   return tree
 
 def calc_path_cost(G: nx.Graph, path: list[str]) -> float:
-  # TODO: Calculate node-traversal cost?
+  total_cost = 0
   
-  ...
+  if not nx.is_path(G, path):
+    raise nx.NetworkXNoPath("path does not exist")
+  
+  edge_weight = setup_calc_edge_weight(G, src=path[0])
+  
+  for u, v in zip(path, path[1:]):
+    total_cost += edge_weight(u, v, G.edges[u,v])
+  
+  return total_cost
+
+def setup_calc_edge_weight(G: nx.Graph, src: str):
+  def calc_edge_weight(n1: str, _: str, edge_data) -> float:
+    if n1 == src:
+      return edge_data.get(EDGE_LATENCY, 1)
+    return G.nodes[n1].get(NODE_LATENCY, 0) + edge_data.get(EDGE_LATENCY, 1)
+  
+  return calc_edge_weight
 
 if __name__ == "__main__":
   main()
