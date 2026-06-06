@@ -61,6 +61,7 @@ def main():
     
     # Scegliamo il percorso migliore dal punto di vista dell'osservabilità
     # scendendo lungo l'albero creato dall'algoritmo di Dario
+    shortest_e2e = nx.shortest_path(G, source=rPMU, target=LABEL_CC, weight=setup_calc_edge_weight(G, src=rPMU))
     try:
       path = choose(
         G, 
@@ -72,13 +73,18 @@ def main():
         v=np.ones((2*NUM_ePMU, 1), dtype=int),
         R=R,
         max_latency=LATENCY_THRESHOLD,
-        parent_latency=nx.shortest_path_length(G, source=rPMU, target=LABEL_CC, weight=setup_calc_edge_weight(G, src=rPMU)),
+        parent_latency=calc_path_cost(G, shortest_e2e),
+        debug=True
       )
-      path = [LABEL_CC, *path]
-      pmu_paths[rPMU] = {"path": path, "delay": calc_path_cost(G, path)} # TODO: Set delay?
+      path = list(reversed([LABEL_CC, *path]))
       print(f"{rPMU}: {path}")
-    except ValueError as e:
-      print(e)
+    except ValueError:
+      path = list(shortest_e2e)
+      
+    pmu_paths[rPMU] = {"path": path, "delay": calc_path_cost(G, path)}
+    for node in path:
+      if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_CANDIDATE:
+        pdcs.add(node)
   
   pos = None
   try:
@@ -151,6 +157,8 @@ def place_pdcs_resiliently(
   T = prefix_tree_from_pmu_paths(pmu_paths)
 
   for rpmu in rPMUs:
+    shortest_e2e = nx.shortest_path(G, source=rpmu, target=LABEL_CC, weight=setup_calc_edge_weight(G, src=rpmu))
+    
     try:
       path = choose(
         G, 
@@ -162,19 +170,22 @@ def place_pdcs_resiliently(
         v=v, 
         R=R, 
         max_latency=max_latency,
-        parent_latency=nx.shortest_path_length(G, source=rpmu, target=LABEL_CC, weight=setup_calc_edge_weight(G, src=rpmu)),
+        parent_latency=calc_path_cost(G, shortest_e2e),
         debug=debug
       )
       path = list(reversed([LABEL_CC, *path]))
-      pmu_paths[rpmu] = {"path": path, "delay": calc_path_cost(G, path)}
+    except ValueError:
       if debug:
-        print(f"{rpmu}: {path}")
+        print(f"No path found in Tree for {rpmu}, using shortest CC-{rpmu}")
+      path = list(shortest_e2e)
       
-      for node in path:
-        if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_CANDIDATE:
-          pdcs.add(node)
-    except ValueError as e:
-      print(e)
+    if debug:
+      print(f"{rpmu}: {path}")
+      
+    pmu_paths[rpmu] = {"path": path, "delay": calc_path_cost(G, path)}
+    for node in path:
+      if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_CANDIDATE:
+        pdcs.add(node)
 
   return pdcs, pmu_paths
 
@@ -196,13 +207,8 @@ def choose(
   if rpmu in nodes or rpmu in neighbors:
     return [rpmu]
   
-  # Calcolo percorsi con Dijkstra da PMUs[i] a tutti gli altri nodi
-  costs, paths = nx.multi_source_dijkstra(
-    G, 
-    sources={rpmu}, 
-    weight=setup_calc_edge_weight(G, src=rpmu), 
-    cutoff=max_latency
-  )
+  # Calcolo percorsi con Dijkstra dall'rPMU a tutti gli altri nodi
+  paths = nx.shortest_path(G, source=rpmu, weight=setup_calc_edge_weight(G, src=rpmu))
 
   # Caso limite (percorso non trovato)
   if len(nodes) == 0:
@@ -220,11 +226,17 @@ def choose(
     if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) != ROLE_CANDIDATE:
       continue
 
-    # Latenza da PMUs[i] al node
-    latency = costs[node]
+    # Latenza end-to-end CC-rPMU
+    path_from_cc = all_predecessors(T, node)     # Path CC - (Node)
+    path_to_rpmu = list(reversed(paths[node]))   # Path Node - rPMU
+    path_e2e = [*path_from_cc, *path_to_rpmu]
+    latency_e2e = calc_path_cost(G, path_e2e)
+    
+    if latency_e2e > max_latency:
+      continue
 
     # Consideriamo solo i figli che hanno latenza minore rispetto al padre
-    if latency > parent_latency:
+    if latency_e2e > parent_latency:
       # Passare per il padre (o attraverso un altro figlio) sarebbe meglio
       continue
     
@@ -241,7 +253,7 @@ def choose(
       print(f"rho({node}): {coeff_senza} -> {coeff_con_pmu} ({delta_rel})")
 
     # Salviamo il risultato tra i nodi validi
-    valid_nodes.append((delta_rel, node, latency))
+    valid_nodes.append((delta_rel, node, latency_e2e))
 
   # Consideriamo in ordine le migliori variazioni (relative) del coefficiente di osservabilità,
   # e la PMU sarà associata a quel nodo.
@@ -273,6 +285,10 @@ def choose(
       continue
 
   if best_path is None:
+    if len(valid_nodes) == 0:
+      # Non ci sono nodi utili, e non c'è un path tra i figli
+      raise ValueError(f"Path not found for {rpmu}.")
+       
     _, node, _ = valid_nodes[0]
     best_path = list(reversed(paths[node]))
     best_path.pop(0)
@@ -407,6 +423,20 @@ def setup_calc_edge_weight(G: nx.Graph, src: str):
     return G.nodes[n1].get(NODE_LATENCY, 0) + edge_data.get(EDGE_LATENCY, 1)
   
   return calc_edge_weight
+
+def all_predecessors(T: nx.DiGraph, node: str, root: str = LABEL_CC) -> list[str]:
+  if node == root:
+    return []
+  
+  predecessors = T.predecessors(node)
+  for pred in predecessors:
+    try:
+      return [*all_predecessors(T, pred), pred]
+    except:
+      continue
+  
+  raise ValueError("Root not found.")
+    
 
 if __name__ == "__main__":
   main()
