@@ -165,7 +165,7 @@ def place_pdcs_resiliently(
         T, 
         PMUs, 
         rpmu=rpmu, 
-        nodes=list(T.successors(LABEL_CC)), 
+        nodes=list(G.neighbors(LABEL_CC)), 
         neighbors=list(G.neighbors(LABEL_CC)), 
         v=v, 
         R=R, 
@@ -223,7 +223,13 @@ def choose(
       continue
 
     # Latenza end-to-end CC-rPMU
-    path_from_cc = all_predecessors(T, node)     # Path CC - (Node)
+    if T.has_node(node):
+      path_from_cc = all_predecessors(T, node)
+    else:
+      path_from_cc = nx.shortest_path(G, LABEL_CC, node, weight=setup_calc_edge_weight(G, LABEL_CC))
+      path_from_cc.pop()
+    # ^ Path CC - (Node)
+    
     path_to_rpmu = list(reversed(paths[node]))   # Path Node - rPMU
     path_e2e = [*path_from_cc, *path_to_rpmu]
     latency_e2e = calc_path_cost(G, path_e2e)
@@ -328,6 +334,9 @@ def get_x_from_pmus(num, *pmus):
   return x
 
 def get_x_from_node(node: str, T: nx.DiGraph, PMUs: list[str], added_pmu: str | None = None):
+  if node not in T:
+    return get_x_from_pmus(len(PMUs), *[])
+  
   pmus = pmu_by_node(node, T, PMUs)
   if added_pmu is None:
     return get_x_from_pmus(len(PMUs), *pmus)
