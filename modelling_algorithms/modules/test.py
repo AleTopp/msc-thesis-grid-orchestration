@@ -32,9 +32,6 @@ def main():
     T = build_tree(pmu_paths, R)
     draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.1-tree-resilient.png", view_mode=3)
 
-    print(f"PMU6's path: {pmu_paths["PMU6"]}")
-    # TODO: Fa su e giù wtf, se il path del figlio passa per il padre non c'ha senso scendere
-
 def build_simple_R(N: int, M: int):
     top    = np.hstack([np.zeros((N, N)), np.eye(N, M)])
     bottom = np.hstack([np.eye(M, N), np.zeros((M, M))])

@@ -67,9 +67,8 @@ def main():
         G, 
         T, 
         PMUs, 
-        rpmu=rPMU, 
-        nodes=list(T.successors(LABEL_CC)), 
-        neighbors=list(G.neighbors(LABEL_CC)), 
+        rpmu=rPMU,
+        parent=LABEL_CC,
         v=np.ones((2*NUM_ePMU, 1), dtype=int),
         R=R,
         max_latency=LATENCY_THRESHOLD,
@@ -120,7 +119,8 @@ def place_pdcs_resiliently(
   essentialPMUs: list[str] | int, 
   v, 
   R, 
-  parchi_constraint : bool = True,
+  parchi_constraint: bool = True,
+  cc_successors_constraint: bool = True,
   debug: bool = False
 ):
   PMUs = []
@@ -167,13 +167,13 @@ def place_pdcs_resiliently(
         T, 
         PMUs, 
         rpmu=rpmu, 
-        nodes=list(T.successors(LABEL_CC)), 
-        neighbors=list(G.neighbors(LABEL_CC)), 
+        parent=LABEL_CC,
         v=v, 
         R=R, 
         max_latency=max_latency,
         parent_latency=calc_path_cost(G, shortest_e2e),
         parchi_constraint=parchi_constraint,
+        cc_successors_constraint=cc_successors_constraint,
         debug=debug
       )
       path = list(reversed([LABEL_CC, *path]))
@@ -197,15 +197,21 @@ def choose(
   T: nx.DiGraph, 
   PMUs: list[str], 
   rpmu: str, 
-  nodes: list[str], 
-  neighbors: list[str], 
+  parent: str,
   v,
   R,
   max_latency: float = LATENCY_THRESHOLD,
   parent_latency: float = math.inf,
-  parchi_constraint : bool = True,
+  parchi_constraint: bool = True,
+  cc_successors_constraint: bool = True,
   debug: bool = False,
 ):
+  neighbors: list[str] = list(G.neighbors(parent))
+  nodes: list[str] = list(T.successors(parent))
+  
+  if not cc_successors_constraint and parent == LABEL_CC:
+    nodes = neighbors.copy()
+  
   # Se è direttamente collegato al padre (il nodo chiamante) ho trovato percorso
   # (Caso base della ricorsione)
   if rpmu in nodes or rpmu in neighbors:
@@ -271,12 +277,12 @@ def choose(
         T, 
         PMUs, 
         rpmu=rpmu, 
-        nodes=list(T.successors(node)), 
-        neighbors=list(G.neighbors(node)), 
+        parent=node,
         v=v, 
         R=R, 
         parent_latency=cost,
-        parchi_constraint=parchi_constraint, 
+        parchi_constraint=parchi_constraint,
+        cc_successors_constraint=cc_successors_constraint,
         debug=debug)
       break
     except:
@@ -294,9 +300,10 @@ def choose(
     best_path = list(reversed(paths[node]))
     best_path.pop(0)
     
-    # TODO: Aggiungi controllo per evitare loop
-    #if parent in best_path:
-    #  raise ValueError(f"Best path for {rpmu} loops on parent {parent}.")
+    # In caso di parchi_constraint=False è possibile che il percorso migliore del figlio
+    # passi per il parent, creando dei loop.
+    if not parchi_constraint and parent in best_path:
+     raise ValueError(f"Best path for {rpmu} loops on parent {parent}.")
     
     if debug:
       print(f"Sono arrivato in fondo a {node} sulla via per {rpmu}, scelgo Dijkstra (path: {paths[node]}).")
