@@ -12,6 +12,7 @@ def main():
     R = build_simple_R(N, M)
     v = np.ones((N+M, 1), dtype=int)
 
+    # Altri seed: 67
     G = create_graph(seed=4, num_pmus=N+M, num_candidates=2*(N+M))
     set_simple_red_role(G, R)
     
@@ -26,11 +27,13 @@ def main():
     T = build_tree(pmu_paths, R)
     draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.0-tree-dario.png", view_mode=3)
 
-    (pdcs, pmu_paths) = place_pdcs_resiliently(G, max_latency=MAX_LAT, essentialPMUs=N, v=v, R=R)
+    (pdcs, pmu_paths) = place_pdcs_resiliently(G, max_latency=MAX_LAT, essentialPMUs=N, v=v, R=R, parchi_constraint=False)
     draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.1-graph-resilient.png", pos=pos)
     T = build_tree(pmu_paths, R)
     draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.1-tree-resilient.png", view_mode=3)
 
+    print(f"PMU6's path: {pmu_paths["PMU6"]}")
+    # TODO: Fa su e giù wtf, se il path del figlio passa per il padre non c'ha senso scendere
 
 def build_simple_R(N: int, M: int):
     top    = np.hstack([np.zeros((N, N)), np.eye(N, M)])

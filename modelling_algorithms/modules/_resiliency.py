@@ -74,6 +74,7 @@ def main():
         R=R,
         max_latency=LATENCY_THRESHOLD,
         parent_latency=calc_path_cost(G, shortest_e2e),
+        parchi_constraint=True,
         debug=True
       )
       path = list(reversed([LABEL_CC, *path]))
@@ -119,6 +120,7 @@ def place_pdcs_resiliently(
   essentialPMUs: list[str] | int, 
   v, 
   R, 
+  parchi_constraint : bool = True,
   debug: bool = False
 ):
   PMUs = []
@@ -171,6 +173,7 @@ def place_pdcs_resiliently(
         R=R, 
         max_latency=max_latency,
         parent_latency=calc_path_cost(G, shortest_e2e),
+        parchi_constraint=parchi_constraint,
         debug=debug
       )
       path = list(reversed([LABEL_CC, *path]))
@@ -200,19 +203,20 @@ def choose(
   R,
   max_latency: float = LATENCY_THRESHOLD,
   parent_latency: float = math.inf,
+  parchi_constraint : bool = True,
   debug: bool = False,
 ):
   # Se è direttamente collegato al padre (il nodo chiamante) ho trovato percorso
   # (Caso base della ricorsione)
   if rpmu in nodes or rpmu in neighbors:
     return [rpmu]
-  
-  # Calcolo percorsi con Dijkstra dall'rPMU a tutti gli altri nodi
-  paths = nx.shortest_path(G, source=rpmu, weight=setup_calc_edge_weight(G, src=rpmu))
 
   # Caso limite (percorso non trovato)
   if len(nodes) == 0:
     raise ValueError(f"Path not found for {rpmu}.")
+  
+  # Calcolo percorsi con Dijkstra dall'rPMU a tutti gli altri nodi
+  paths = nx.shortest_path(G, source=rpmu, weight=setup_calc_edge_weight(G, src=rpmu))
 
   valid_nodes: list[tuple[float, str, float]] = []
 
@@ -222,7 +226,7 @@ def choose(
     if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) != ROLE_CANDIDATE:
       continue
 
-    # Latenza end-to-end CC-rPMU
+    # Latenza end-to-end CC-rPMU passando per Node
     path_from_cc = all_predecessors(T, node)     # Path CC - (Node)
     path_to_rpmu = list(reversed(paths[node]))   # Path Node - rPMU
     path_e2e = [*path_from_cc, *path_to_rpmu]
@@ -232,7 +236,7 @@ def choose(
       continue
 
     # Consideriamo solo i figli che hanno latenza minore rispetto al padre
-    if latency_e2e > parent_latency:
+    if parchi_constraint and latency_e2e > parent_latency:
       # Passare per il padre (o attraverso un altro figlio) sarebbe meglio
       continue
     
@@ -271,7 +275,8 @@ def choose(
         neighbors=list(G.neighbors(node)), 
         v=v, 
         R=R, 
-        parent_latency=cost, 
+        parent_latency=cost,
+        parchi_constraint=parchi_constraint, 
         debug=debug)
       break
     except:
@@ -288,6 +293,11 @@ def choose(
     _, node, _ = valid_nodes[0]
     best_path = list(reversed(paths[node]))
     best_path.pop(0)
+    
+    # TODO: Aggiungi controllo per evitare loop
+    #if parent in best_path:
+    #  raise ValueError(f"Best path for {rpmu} loops on parent {parent}.")
+    
     if debug:
       print(f"Sono arrivato in fondo a {node} sulla via per {rpmu}, scelgo Dijkstra (path: {paths[node]}).")
 
