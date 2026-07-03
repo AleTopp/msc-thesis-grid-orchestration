@@ -1,121 +1,16 @@
-from graph_model import EDGE_BANDWIDTH, EDGE_LATENCY, EDGE_STATUS_ONLINE, LABEL_CC, NODE_LATENCY, NODE_ROLE, NODE_STATUS, ROLE_CANDIDATE, ROLE_PMU, create_graph
-from visualizer import draw_graph
+from graph_model import EDGE_LATENCY, LABEL_CC, NODE_LATENCY, NODE_ROLE, ROLE_CANDIDATE, ROLE_PMU
 from placement_pdc import place_pdcs_greedy
 from operator import itemgetter
 import networkx as nx
 import numpy as np
-import math, random, re, types
+import math, re, types
 
 LATENCY_THRESHOLD = 200
-RPMU_LINKS = 1
-NUM_ePMU = 4
-R = None
 
 PDC_PRIO_UNCHANGED = 0
 PDC_PRIO_FALSE = 1
 PDC_PRIO_TRUE = 2
 
-def main():
-  # -- HELPERS --
-  def add_edge(u, v):
-    if u == v or G.has_edge(u, v):
-      return
-    G.add_edge(
-      u, v,
-      **{
-        EDGE_LATENCY: round(random.uniform(1, 3), 2),
-        EDGE_BANDWIDTH: 400,
-        NODE_STATUS: EDGE_STATUS_ONLINE,
-      }
-    )
-
-  # ---- SETUP ----
-  # Crea grafo casuale G con M PMU (che saranno ePMU), CC e nodi liberi
-  G = create_graph(seed=42, num_pmus=NUM_ePMU)
-  # Eseguiamo algo greedy di Dario -> Tree
-  (pdcs, pmu_paths, _) = place_pdcs_greedy(G, max_latency=LATENCY_THRESHOLD)
-  rev_paths = [list(reversed(val["path"])) for val in pmu_paths.values()]
-  T = my_prefix_tree(rev_paths)
-  # Inizializza matrice di ridondanza
-  global R
-  R = np.zeros((2*NUM_ePMU, 2*NUM_ePMU), dtype=float)
-
-  old = {
-    "T": T.copy(),
-    "G": G.copy(),
-    "pdcs": pdcs.copy(), 
-    "pmu_paths": pmu_paths.copy()
-  }
-
-  # ---- NEW ----
-  PMUs = [f"PMU{i}" for i in range(1, NUM_ePMU + 1)]
-  rPMUs = [f"rPMU{NUM_ePMU + j + 1}-({j + 1})" for j in range(0, NUM_ePMU)]
-  PMUs.extend(rPMUs)
-  
-  for j in range(0, NUM_ePMU): #(nuovi rPMU)
-    # Posiziona casualmente il PMU (ovvero collega casualmente a un nodo)
-    rPMU = rPMUs[j]
-    G.add_node(rPMU, **{ NODE_ROLE: ROLE_PMU })
-    for n in random.sample([n for n, d in G.nodes(data=True) if d.get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_CANDIDATE], RPMU_LINKS):
-      add_edge(rPMU, n)
-    
-    # Riempiamo la matrice di ridondanza
-    R[j][NUM_ePMU+j] = 1
-    R[NUM_ePMU+j][j] = 1
-    
-    # Scegliamo il percorso migliore dal punto di vista dell'osservabilità
-    # scendendo lungo l'albero creato dall'algoritmo di Dario
-    shortest_e2e = nx.shortest_path(G, source=rPMU, target=LABEL_CC, weight=setup_calc_edge_weight(G, src=rPMU))
-    try:
-      path = choose(
-        G, 
-        T, 
-        PMUs, 
-        rpmu=rPMU,
-        parent=LABEL_CC,
-        v=np.ones((2*NUM_ePMU, 1), dtype=int),
-        R=R,
-        max_latency=LATENCY_THRESHOLD,
-        parent_latency=calc_path_cost(G, shortest_e2e),
-        parchi_constraint=True,
-        debug=True
-      )
-      path = list(reversed([LABEL_CC, *path]))
-      print(f"{rPMU}: {path}")
-    except ValueError:
-      path = list(shortest_e2e)
-      
-    pmu_paths[rPMU] = {"path": path, "delay": calc_path_cost(G, path)}
-    for node in path:
-      if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_CANDIDATE:
-        pdcs.add(node)
-  
-  pos = None
-  try:
-    pos = nx.nx_pydot.pydot_layout(G, prog="dot")
-  except:
-    pos = nx.spring_layout(G, seed=42)
-
-  # Grafici iniziali (posizionamento di Dario)
-  draw_graph(old["G"], None, {}, max_latency=None, output_path="output/0-graph-empty.png", pos=pos)
-  draw_graph(old["G"], old["pdcs"], old["pmu_paths"], output_path="output/1-graph-dario.png", pos=pos)
-  draw_graph(old["T"], old["pdcs"], old["pmu_paths"], output_path="output/2-tree-dario.png", pos=pos)
-
-  # Singoli percorsi per PMU
-  for j, (pmu, data) in enumerate(pmu_paths.items()):
-    only_path = {pmu: data}
-    draw_graph(G, pdcs, only_path, output_path=f"output/3.{j}-graph-resilient.png", pos=pos)
-  
-  # Tutti percorsi insieme
-  draw_graph(G, pdcs, pmu_paths, output_path="output/3.z-graph-resilient.png", pos=pos)
-
-  # Coppie ridondanti
-  items = list(pmu_paths.items())
-  for j in range(len(items) // 2):
-    epmu, data_e = items[j]
-    rpmu, data_r = items[NUM_ePMU + j]
-    only_paths = {epmu: data_e, rpmu: data_r}
-    draw_graph(G, pdcs, only_paths, output_path=f"output/4.{j}-graph-resilient.png", pos=pos)
 
 def place_pdcs_resiliently(
   G: nx.Graph, 
@@ -492,7 +387,3 @@ def top_tied(lst: list[tuple[float]], rel_tol: float = 1e-3):
     return []
   top = max(t[0] for t in lst)
   return [t for t in lst if math.isclose(t[0], top, rel_tol=rel_tol)]
-    
-
-if __name__ == "__main__":
-  main()
