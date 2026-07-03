@@ -106,6 +106,7 @@ def choose(
   R,
   max_latency: float = LATENCY_THRESHOLD,
   parent_latency: float = math.inf,
+  best_node_above: list[tuple[float, str, float, bool]] = [],
   parchi_constraint: bool = True,
   cc_successors_constraint: bool = True,
   pdc_prio: int = PDC_PRIO_UNCHANGED,
@@ -212,6 +213,7 @@ def choose(
         R=R, 
         max_latency=max_latency,
         parent_latency=cost,
+        best_node_above=[*best_node_above, valid_nodes[0]],
         parchi_constraint=parchi_constraint,
         cc_successors_constraint=cc_successors_constraint,
         pdc_prio=pdc_prio,
@@ -228,7 +230,20 @@ def choose(
       # Non ci sono nodi utili, e non c'è un path tra i figli
       raise ValueError(f"Path not found for {rpmu}.")
     
-    _, node, _, _ = valid_nodes[0]
+    # Best candidate at this layer
+    _, node, cost, _ = valid_nodes[0]
+    
+    # Check if other layers have better candidates
+    if best_node_above:
+      best_nodes_for_layer = [*best_node_above, valid_nodes[0]]
+      best_nodes_for_layer = top_tied(best_nodes_for_layer)
+      best_nodes_for_layer = sorted(best_nodes_for_layer, key=itemgetter(2))
+      
+      if best_nodes_for_layer[0][1] != node:
+        if debug:
+          print(f"Best path is not here ({node}) for {rpmu}. It's {best_nodes_for_layer[0][1]}.")
+        raise ValueError(f"Best path is not here ({node}) for {rpmu}.")
+    
     best_path = list(reversed(paths[node]))
     best_path.pop(0)
     
