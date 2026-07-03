@@ -27,7 +27,9 @@ def create_graph(
     p_extra=0.35,          # probability to add extra edge between candidates (beyond the spanning tree)
     cc_min_links=2,        # minimum links from CC to candidates (at least 1)
     cc_max_links=None,     # maximum links from CC to candidates (None = up to num_candidates)
-    pmu_links=1            # links from each PMU to candidates
+    pmu_links=1,           # links from each PMU to candidates
+    edge_latency_min=1,
+    edge_latency_max=3,
 ):
     if seed is not None:
         random.seed(seed)
@@ -75,7 +77,7 @@ def create_graph(
         G.add_edge(
             u, v,
             **{
-                EDGE_LATENCY: round(random.uniform(1, 3), 2),
+                EDGE_LATENCY: round(random.uniform(edge_latency_min, edge_latency_max), 2),
                 EDGE_BANDWIDTH: 400,
                 NODE_STATUS: EDGE_STATUS_ONLINE,
             }
