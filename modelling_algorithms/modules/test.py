@@ -1,4 +1,4 @@
-from _resiliency import place_pdcs_resiliently, prefix_tree_from_pmu_paths, vec_idx_from_pmu_name
+from _resiliency import PDC_PRIO_UNCHANGED, PDC_PRIO_FALSE, PDC_PRIO_TRUE, place_pdcs_resiliently, prefix_tree_from_pmu_paths, vec_idx_from_pmu_name
 from placement_pdc import place_pdcs_greedy
 from graph_model import create_graph
 from visualizer import draw_graph
@@ -7,13 +7,27 @@ import numpy as np
 import re
 
 def main():
-    MAX_LAT = 500
+    # PMUs
     N, M = 4, 4
-    R = build_simple_R(N, M)
     v = np.ones((N+M, 1), dtype=int)
+    R = build_simple_R(N, M)
+    
+    # Graph
+    SEED = 67                   # Altri seed: 4, 67
+    CANDIDATES = 2*(N+M)        # 2*(N+M) or 3*(N+M)
+    MAX_CC_LINKS = N            # None or N
+    
+    # Algo
+    MAX_LAT = 200
+    CONSIDER_NEIGH = True
+    PAR_CHI = False
+    PDC_PRIO = PDC_PRIO_UNCHANGED
+    DEBUG = True
+    
+    # All
+    set = {"N": N, "M": M, "v": v, "R": R, "SEED": SEED, "CANDIDATES": CANDIDATES, "MAX_CC_LINKS": MAX_CC_LINKS, "MAX_LAT": MAX_LAT, "CONSIDER_NEIGH": CONSIDER_NEIGH, "PAR_CHI": PAR_CHI, "PDC_PRIO": PDC_PRIO}
 
-    # Altri seed: 67
-    G = create_graph(seed=4, num_pmus=N+M, num_candidates=2*(N+M))
+    G = create_graph(seed=SEED, num_pmus=N+M, num_candidates=CANDIDATES, cc_max_links=MAX_CC_LINKS)
     set_simple_red_role(G, R)
     
     pos = None
@@ -23,14 +37,14 @@ def main():
         pos = nx.spring_layout(G, seed=42)
 
     (pdcs, pmu_paths, _) = place_pdcs_greedy(G, max_latency=MAX_LAT, flag_splitting=False)
-    draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.0-graph-dario.png", pos=pos)
+    draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.0-graph-dario.png", pos=pos, params=set)
     T = build_tree(pmu_paths, R)
-    draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.0-tree-dario.png", view_mode=3)
+    draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.0-tree-dario.png", view_mode=3, params=set)
 
-    (pdcs, pmu_paths) = place_pdcs_resiliently(G, max_latency=MAX_LAT, essentialPMUs=N, v=v, R=R, parchi_constraint=False)
-    draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.1-graph-resilient.png", pos=pos)
+    (pdcs, pmu_paths) = place_pdcs_resiliently(G, max_latency=MAX_LAT, essentialPMUs=N, v=v, R=R, parchi_constraint=PAR_CHI, cc_successors_constraint=(not CONSIDER_NEIGH), pdc_prio=PDC_PRIO, debug=DEBUG)
+    draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.1-graph-resilient.png", pos=pos, params=set)
     T = build_tree(pmu_paths, R)
-    draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.1-tree-resilient.png", view_mode=3)
+    draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.1-tree-resilient.png", view_mode=3, params=set)
 
 def build_simple_R(N: int, M: int):
     top    = np.hstack([np.zeros((N, N)), np.eye(N, M)])

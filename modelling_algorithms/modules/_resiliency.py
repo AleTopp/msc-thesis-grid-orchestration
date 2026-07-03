@@ -11,6 +11,10 @@ RPMU_LINKS = 1
 NUM_ePMU = 4
 R = None
 
+PDC_PRIO_UNCHANGED = 0
+PDC_PRIO_FALSE = 1
+PDC_PRIO_TRUE = 2
+
 def main():
   # -- HELPERS --
   def add_edge(u, v):
@@ -121,6 +125,7 @@ def place_pdcs_resiliently(
   R, 
   parchi_constraint: bool = True,
   cc_successors_constraint: bool = True,
+  pdc_prio: int = PDC_PRIO_UNCHANGED,
   debug: bool = False
 ):
   PMUs = []
@@ -162,6 +167,8 @@ def place_pdcs_resiliently(
     shortest_e2e = nx.shortest_path(G, source=rpmu, target=LABEL_CC, weight=setup_calc_edge_weight(G, src=rpmu))
     
     try:
+      if debug:
+        print(f"--- Starting recursion for {rpmu}")
       path = choose(
         G, 
         T, 
@@ -174,12 +181,14 @@ def place_pdcs_resiliently(
         parent_latency=calc_path_cost(G, shortest_e2e),
         parchi_constraint=parchi_constraint,
         cc_successors_constraint=cc_successors_constraint,
+        pdc_prio=pdc_prio,
         debug=debug
       )
       path = list(reversed([LABEL_CC, *path]))
-    except ValueError:
+    except ValueError as err:
       if debug:
-        print(f"No path found in Tree for {rpmu}, using shortest CC-{rpmu}")
+        print(f"Error returned to {LABEL_CC}: {err}")
+        print(f"No path found in Tree for {rpmu}, using shortest {LABEL_CC}-{rpmu}")
       path = list(shortest_e2e)
       
     if debug:
@@ -204,10 +213,14 @@ def choose(
   parent_latency: float = math.inf,
   parchi_constraint: bool = True,
   cc_successors_constraint: bool = True,
+  pdc_prio: int = PDC_PRIO_UNCHANGED,
   debug: bool = False,
 ):
   neighbors: list[str] = list(G.neighbors(parent))
-  nodes: list[str] = list(T.successors(parent))
+  try:
+    nodes: list[str] = list(T.successors(parent))
+  except:
+    nodes: list[str] = []
   
   if not cc_successors_constraint and parent == LABEL_CC:
     nodes = neighbors.copy()
@@ -224,7 +237,8 @@ def choose(
   # Calcolo percorsi con Dijkstra dall'rPMU a tutti gli altri nodi
   paths = nx.shortest_path(G, source=rpmu, weight=setup_calc_edge_weight(G, src=rpmu))
 
-  valid_nodes: list[tuple[float, str, float]] = []
+  # Ogni tupla ha (delta_rel, nome_nodo, costo, pdc_già_presente)
+  valid_nodes: list[tuple[float, str, float, bool]] = []
 
   # Valuto le latenze fino a ognuno dei nodi del livello attuale
   for node in nodes:
@@ -232,17 +246,25 @@ def choose(
     if G.nodes[node].get(NODE_ROLE, ROLE_CANDIDATE) != ROLE_CANDIDATE:
       continue
 
-    # Latenza end-to-end CC-rPMU passando per Node
-    path_from_cc = all_predecessors(T, node)     # Path CC - (Node)
+    # -- Latenza end-to-end CC-rPMU passando per Node --
+    if T.has_node(node):
+      path_from_cc = all_predecessors(T, node)
+    elif node in neighbors: 
+      path_from_cc = [LABEL_CC]
+    else:
+      continue
+    # ^ Path CC - (Node)
+
     path_to_rpmu = list(reversed(paths[node]))   # Path Node - rPMU
     path_e2e = [*path_from_cc, *path_to_rpmu]
     latency_e2e = calc_path_cost(G, path_e2e)
+    # -----
     
     if latency_e2e > max_latency:
       continue
 
-    # Consideriamo solo i figli che hanno latenza minore rispetto al padre
     if parchi_constraint and latency_e2e > parent_latency:
+      # Così consideriamo solo i figli che hanno latenza minore rispetto al padre
       # Passare per il padre (o attraverso un altro figlio) sarebbe meglio
       continue
     
@@ -251,7 +273,7 @@ def choose(
     coeff_con_pmu = calc_coeff_v2(get_x_from_node(node, T, PMUs, rpmu), v, R)
     coeff_senza = calc_coeff_v2(get_x_from_node(node, T, PMUs), v, R)
     if coeff_senza == 0:
-      delta_rel = math.inf
+      delta_rel = coeff_con_pmu
     else:
       delta_rel = (coeff_con_pmu - coeff_senza) / coeff_senza
       
@@ -259,15 +281,28 @@ def choose(
       print(f"rho({node}): {coeff_senza} -> {coeff_con_pmu} ({delta_rel})")
 
     # Salviamo il risultato tra i nodi validi
-    valid_nodes.append((delta_rel, node, latency_e2e))
+    valid_nodes.append((delta_rel, node, latency_e2e, coeff_senza > 0))
 
-  # Consideriamo in ordine le migliori variazioni (relative) del coefficiente di osservabilità,
-  # e la PMU sarà associata a quel nodo.
-  # A parità di coefficiente (posizione 0 della tupla), si ordina per costo dal PMU[i] (pos 2).
-  valid_nodes = sorted(valid_nodes, key=itemgetter(0,2), reverse=True)
+  if debug:
+    print(f"all valid_nodes ({len(valid_nodes)}): {valid_nodes}")
+
+  # Consideriamo solo i figli (`nodes`) che hanno la migliore variazione (relativa) del coefficiente di osservabilità,
+  # E li ordiniamo per latenza crescente rPMU-nodo-CC (pos 2 nella tupla).
+  valid_nodes = top_tied(valid_nodes)
+  valid_nodes = sorted(valid_nodes, key=itemgetter(2))
+  
+  # Poi li ordiniamo in base a chi ha priorità (PDC o no PDC)
+  if pdc_prio == PDC_PRIO_TRUE:
+    valid_nodes = sorted(valid_nodes, key=itemgetter(3), reverse=True)  # Prima i True (PDC già presente)
+  elif pdc_prio == PDC_PRIO_FALSE:
+    valid_nodes = sorted(valid_nodes, key=itemgetter(3), reverse=False) # Prima i False (no PDC)
+    
+  if debug:
+    print(f"remaining valid_nodes ({len(valid_nodes)}): {valid_nodes}")
+  
   best_path: list[str] = None
 
-  for _, node, cost in valid_nodes:
+  for _, node, cost, _ in valid_nodes:
     try:
       # Cerchiamo ricorsivamente il percorso tra i figli del nodo (nell'albero)
       if debug:
@@ -280,12 +315,14 @@ def choose(
         parent=node,
         v=v, 
         R=R, 
+        max_latency=max_latency,
         parent_latency=cost,
         parchi_constraint=parchi_constraint,
         cc_successors_constraint=cc_successors_constraint,
+        pdc_prio=pdc_prio,
         debug=debug)
       break
-    except:
+    except ValueError:
       # Se ha fallito la ricorsione
       if debug:
         print(f"Escludo {node} sulla via per {rpmu}.")
@@ -295,15 +332,17 @@ def choose(
     if len(valid_nodes) == 0:
       # Non ci sono nodi utili, e non c'è un path tra i figli
       raise ValueError(f"Path not found for {rpmu}.")
-       
-    _, node, _ = valid_nodes[0]
+    
+    _, node, _, _ = valid_nodes[0]
     best_path = list(reversed(paths[node]))
     best_path.pop(0)
     
     # In caso di parchi_constraint=False è possibile che il percorso migliore del figlio
     # passi per il parent, creando dei loop.
     if not parchi_constraint and parent in best_path:
-     raise ValueError(f"Best path for {rpmu} loops on parent {parent}.")
+      if debug:
+        print(f"Best path for {rpmu} loops on parent {parent}.")
+      raise ValueError(f"Best path for {rpmu} loops on parent {parent}.")
     
     if debug:
       print(f"Sono arrivato in fondo a {node} sulla via per {rpmu}, scelgo Dijkstra (path: {paths[node]}).")
@@ -316,15 +355,13 @@ def choose(
 # Oppure dobbiamo valutare quale tra i nodi padri possibili scegliere
 
 def pmu_by_node(node: str, T: nx.DiGraph, PMUs: list[str]) -> list[str]:
-  T2 = T.copy()
-  T2.remove_node(LABEL_CC)
-
   reachable = []
+
   for pmu in PMUs:
     try:
-      if nx.has_path(T2, node, pmu):
+      # has_path looks for a path considering directional edges in T
+      if nx.has_path(T, node, pmu):
         reachable.append(pmu)
-        # TODO: Controlla che non possa tornare indietro salendo sull'albero
     except nx.NodeNotFound:
       # rPMUs should not be counted until fixed in the Tree
       continue
@@ -449,6 +486,12 @@ def all_predecessors(T: nx.DiGraph, node: str, root: str = LABEL_CC) -> list[str
       continue
   
   raise ValueError("Root not found.")
+
+def top_tied(lst: list[tuple[float]], rel_tol: float = 1e-3):
+  if not lst:
+    return []
+  top = max(t[0] for t in lst)
+  return [t for t in lst if math.isclose(t[0], top, rel_tol=rel_tol)]
     
 
 if __name__ == "__main__":

@@ -20,7 +20,8 @@ def draw_graph(
     max_latency: float = None, 
     output_path: Path | None = None, 
     pos = None, 
-    view_mode: int = 1
+    view_mode: int = 1,
+    params: dict[str, str] = None,
 ):
     if pdcs is None:
         pdcs = set()
@@ -163,7 +164,25 @@ def draw_graph(
             0.05, 0.85, text,
             fontsize=9,
             verticalalignment="top",
-            bbox=dict(facecolor="white", edgecolor="black", boxstyle="round,pad=0.5"),
+            bbox=dict(facecolor="white", alpha=0.8, edgecolor="black", boxstyle="round,pad=0.5"),
+        )
+        
+    if params:
+        # Text box con parametri
+        text = "Used parameters:\n"
+        for key, val in params.items():
+            if key == "v":
+                text += f"{key}ᵀ: {val.transpose()}\n"
+            elif key == "R":
+                text += f"{key}:\n {val}\n"
+            else:
+                text += f"{key}: {val}\n"
+        
+        plt.gcf().text(
+            0.99, 0.99, text,
+            fontsize=9,
+            verticalalignment="top",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="black", boxstyle="round,pad=0.5"),
         )
 
     # Legend
