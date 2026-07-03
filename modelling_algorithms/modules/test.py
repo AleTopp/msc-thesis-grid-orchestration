@@ -13,21 +13,23 @@ def main():
     R = build_simple_R(N, M)
     
     # Graph
-    SEED = 67                   # Altri seed: 4, 67
-    CANDIDATES = 2*(N+M)        # 2*(N+M) or 3*(N+M)
+    SEED = 7                   # Altri seed: 4, 67
+    CANDIDATES = (N+M)        # 2*(N+M) or 3*(N+M)
     MAX_CC_LINKS = N            # None or N
+    EDGE_LAT_MIN = 1
+    EDGE_LAT_MAX = 3
     
     # Algo
-    MAX_LAT = 200
+    MAX_LAT = 72
     CONSIDER_NEIGH = True
     PAR_CHI = False
     PDC_PRIO = PDC_PRIO_UNCHANGED
     DEBUG = True
     
     # All
-    set = {"N": N, "M": M, "v": v, "R": R, "SEED": SEED, "CANDIDATES": CANDIDATES, "MAX_CC_LINKS": MAX_CC_LINKS, "MAX_LAT": MAX_LAT, "CONSIDER_NEIGH": CONSIDER_NEIGH, "PAR_CHI": PAR_CHI, "PDC_PRIO": PDC_PRIO}
+    set = {"N": N, "M": M, "v": v, "R": R, "SEED": SEED, "CANDIDATES": CANDIDATES, "MAX_CC_LINKS": MAX_CC_LINKS, "EDGE_LAT_MIN": EDGE_LAT_MIN, "EDGE_LAT_MAX": EDGE_LAT_MAX, "MAX_LAT": MAX_LAT, "CONSIDER_NEIGH": CONSIDER_NEIGH, "PAR_CHI": PAR_CHI, "PDC_PRIO": PDC_PRIO}
 
-    G = create_graph(seed=SEED, num_pmus=N+M, num_candidates=CANDIDATES, cc_max_links=MAX_CC_LINKS)
+    G = create_graph(seed=SEED, num_pmus=N+M, num_candidates=CANDIDATES, cc_max_links=MAX_CC_LINKS, edge_latency_min=EDGE_LAT_MIN, edge_latency_max=EDGE_LAT_MAX)
     set_simple_red_role(G, R)
     
     pos = None
