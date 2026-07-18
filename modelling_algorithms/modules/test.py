@@ -13,17 +13,18 @@ def main():
     R = build_simple_R(N, M)
     
     # Graph
-    SEED = 7                   # Altri seed: 4, 67
-    CANDIDATES = (N+M)        # 2*(N+M) or 3*(N+M)
+    SEED = 42                   # Altri seed: 4, 67
+    CANDIDATES = 1*(N+M)        # 2*(N+M) or 3*(N+M)
     MAX_CC_LINKS = N            # None or N
     EDGE_LAT_MIN = 1
     EDGE_LAT_MAX = 3
     
     # Algo
-    MAX_LAT = 72
+    MAX_LAT = 500
     CONSIDER_NEIGH = True
     PAR_CHI = False
     PDC_PRIO = PDC_PRIO_UNCHANGED
+    OVERLAPPED_LINKS = [[("N16", "CC"), ("N13", "N9")]]
     DEBUG = True
     
     # All
@@ -31,6 +32,8 @@ def main():
 
     G = create_graph(seed=SEED, num_pmus=N+M, num_candidates=CANDIDATES, cc_max_links=MAX_CC_LINKS, edge_latency_min=EDGE_LAT_MIN, edge_latency_max=EDGE_LAT_MAX)
     set_simple_red_role(G, R)
+    
+    draw_graph(G, output_path="output-test/0.png")
     
     pos = None
     try:
@@ -43,10 +46,10 @@ def main():
     T = build_tree(pmu_paths, R)
     draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.0-tree-dario.png", view_mode=3, params=set)
 
-    (pdcs, pmu_paths) = place_pdcs_resiliently(G, max_latency=MAX_LAT, essentialPMUs=N, v=v, R=R, parchi_constraint=PAR_CHI, cc_successors_constraint=(not CONSIDER_NEIGH), pdc_prio=PDC_PRIO, debug=DEBUG)
-    draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.1-graph-resilient.png", pos=pos, params=set)
+    (pdcs, pmu_paths) = place_pdcs_resiliently(G, max_latency=MAX_LAT, essentialPMUs=N, v=v, R=R, parchi_constraint=PAR_CHI, cc_successors_constraint=(not CONSIDER_NEIGH), pdc_prio=PDC_PRIO, overlapped_links=OVERLAPPED_LINKS, debug=DEBUG)
+    draw_graph(G, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/1.1b-graph-resilient.png", pos=pos, params=set)
     T = build_tree(pmu_paths, R)
-    draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.1-tree-resilient.png", view_mode=3, params=set)
+    draw_graph(T, pdcs, pmu_paths, max_latency=MAX_LAT, output_path="output-test/2.1b-tree-resilient.png", view_mode=3, params=set)
 
 def build_simple_R(N: int, M: int):
     top    = np.hstack([np.zeros((N, N)), np.eye(N, M)])

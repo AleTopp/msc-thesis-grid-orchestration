@@ -1,4 +1,4 @@
-from graph_model import EDGE_LATENCY, LABEL_CC, NODE_LATENCY, NODE_ROLE, ROLE_CANDIDATE, ROLE_PMU
+from graph_model import EDGE_LATENCY, LABEL_CC, LABEL_PMU, NODE_LATENCY, NODE_ROLE, ROLE_CANDIDATE, ROLE_PMU
 from placement_pdc import place_pdcs_greedy
 from operator import itemgetter
 import networkx as nx
@@ -11,6 +11,9 @@ PDC_PRIO_UNCHANGED = 0
 PDC_PRIO_FALSE = 1
 PDC_PRIO_TRUE = 2
 
+NODE_MALUS = 1
+EDGE_MALUS = 1
+
 
 def place_pdcs_resiliently(
   G: nx.Graph, 
@@ -21,6 +24,7 @@ def place_pdcs_resiliently(
   parchi_constraint: bool = True,
   cc_successors_constraint: bool = True,
   pdc_prio: int = PDC_PRIO_UNCHANGED,
+  overlapped_links: list[list[tuple[str, str]]] = [],
   debug: bool = False
 ):
   PMUs = []
@@ -77,6 +81,7 @@ def place_pdcs_resiliently(
         parchi_constraint=parchi_constraint,
         cc_successors_constraint=cc_successors_constraint,
         pdc_prio=pdc_prio,
+        overlapped_links=overlapped_links,
         debug=debug
       )
       path = list(reversed([LABEL_CC, *path]))
@@ -106,10 +111,11 @@ def choose(
   R,
   max_latency: float = LATENCY_THRESHOLD,
   parent_latency: float = math.inf,
-  best_node_above: list[tuple[float, str, float, bool]] = [],
+  best_node_above: list[tuple[float, str, float, bool, int]] = [],
   parchi_constraint: bool = True,
   cc_successors_constraint: bool = True,
   pdc_prio: int = PDC_PRIO_UNCHANGED,
+  overlapped_links: list[list[tuple[str, str]]] = [],
   debug: bool = False,
 ):
   neighbors: list[str] = list(G.neighbors(parent))
@@ -132,9 +138,13 @@ def choose(
   
   # Calcolo percorsi con Dijkstra dall'rPMU a tutti gli altri nodi
   paths = nx.shortest_path(G, source=rpmu, weight=setup_calc_edge_weight(G, src=rpmu))
+  
+  # Calcolo percorsi per il malus
+  red_paths = get_redundacy_paths(T, R, rpmu)
+  edge_to_link_ids = _build_edge_overlap_index(overlapped_links)
 
   # Ogni tupla ha (delta_rel, nome_nodo, costo, pdc_già_presente)
-  valid_nodes: list[tuple[float, str, float, bool]] = []
+  valid_nodes: list[tuple[float, str, float, bool, int]] = []
 
   # Valuto le latenze fino a ognuno dei nodi del livello attuale
   for node in nodes:
@@ -175,16 +185,23 @@ def choose(
       
     if debug:
       print(f"rho({node}): {coeff_senza} -> {coeff_con_pmu} ({delta_rel})")
+      
+    redundancy_malus = 0
+    for p in red_paths:
+      # Eventualmente un toggle qui per fare break
+      
+      redundancy_malus += compute_redundancy_malus(p, path_e2e, edge_to_link_ids, overlapped_links, rpmu)
 
     # Salviamo il risultato tra i nodi validi
-    valid_nodes.append((delta_rel, node, latency_e2e, coeff_senza > 0))
+    valid_nodes.append((delta_rel, node, latency_e2e, coeff_senza > 0, redundancy_malus))
 
   if debug:
     print(f"all valid_nodes ({len(valid_nodes)}): {valid_nodes}")
 
   # Consideriamo solo i figli (`nodes`) che hanno la migliore variazione (relativa) del coefficiente di osservabilità,
-  # E li ordiniamo per latenza crescente rPMU-nodo-CC (pos 2 nella tupla).
+  # E li ordiniamo prima per redundacy_malus (pos 4 nella tupla), e poi latenza crescente rPMU-nodo-CC (pos 2).
   valid_nodes = top_tied(valid_nodes)
+  valid_nodes = sorted(valid_nodes, key=itemgetter(4), reverse=True)
   valid_nodes = sorted(valid_nodes, key=itemgetter(2))
   
   # Poi li ordiniamo in base a chi ha priorità (PDC o no PDC)
@@ -198,7 +215,7 @@ def choose(
   
   best_path: list[str] = None
 
-  for _, node, cost, _ in valid_nodes:
+  for _, node, cost, _, _ in valid_nodes:
     try:
       # Cerchiamo ricorsivamente il percorso tra i figli del nodo (nell'albero)
       if debug:
@@ -217,6 +234,7 @@ def choose(
         parchi_constraint=parchi_constraint,
         cc_successors_constraint=cc_successors_constraint,
         pdc_prio=pdc_prio,
+        overlapped_links=overlapped_links,
         debug=debug)
       break
     except ValueError:
@@ -231,7 +249,7 @@ def choose(
       raise ValueError(f"Path not found for {rpmu}.")
     
     # Best candidate at this layer
-    _, node, cost, _ = valid_nodes[0]
+    _, node, cost, _, _ = valid_nodes[0]
     
     # Check if other layers have better candidates
     if best_node_above:
@@ -402,3 +420,82 @@ def top_tied(lst: list[tuple[float]], rel_tol: float = 1e-3):
     return []
   top = max(t[0] for t in lst)
   return [t for t in lst if math.isclose(t[0], top, rel_tol=rel_tol)]
+
+def check_symmetric(a, tol=1e-8):
+    return np.all(np.abs(a-a.T) < tol)
+
+def get_redundacy_paths(T: nx.DiGraph, R, rpmu: str) -> list[tuple[float, list[str]]]:
+  paths = []
+  
+  # Implementation is valid only for symmetric R matrix
+  if not check_symmetric(R):
+    return paths
+  
+  idx = vec_idx_from_pmu_name(rpmu)
+  row = R[idx]
+  for j, val in enumerate(row):
+    if val == 0:
+      continue
+    
+    epmu = LABEL_PMU(j+1)
+    path = list(reversed([*all_predecessors(T, epmu), epmu]))
+    paths.append((val, path))
+  
+  return paths
+
+
+def _normalize_edge(u: str, v: str) -> tuple[str, str]:
+  if u <= v:
+    return (u, v)
+  else:
+    return (v, u)
+
+
+def _build_edge_overlap_index(
+  overlapped_links: list[list[tuple[str, str]]],
+) -> dict[tuple[str, str], list[int]]:
+  edge_to_link_ids: dict[tuple[str, str], list[int]] = {}
+  for link_idx, phy_link_list in enumerate(overlapped_links):
+    for edge in phy_link_list:
+      edge_to_link_ids.setdefault(_normalize_edge(*edge), []).append(link_idx)
+  return edge_to_link_ids
+
+
+def compute_redundancy_malus(
+  essential: tuple[float, list[str]],
+  path_e2e: list[str],
+  edge_to_link_ids: dict[tuple[str, str], list[int]],
+  overlapped_links: list[list[tuple[str, str]]],
+  rpmu: str,
+) -> int:
+  malus = 0
+  
+  redundancy_value, path = essential
+
+  for node in path:
+    if node != rpmu and node in path_e2e:
+      malus -= NODE_MALUS * redundancy_value
+
+  if not overlapped_links:
+    return malus
+
+  red_edges = [(n1, n2) for n1, n2 in zip(path, path[1:])]
+  path_edges = [(n1, n2) for n1, n2 in zip(path_e2e, path_e2e[1:])]
+
+  red_edge_counts = [0] * len(overlapped_links)
+  for edge in red_edges:
+    edge_key = _normalize_edge(*edge)
+    for link_idx in edge_to_link_ids.get(edge_key, ()):
+      red_edge_counts[link_idx] += 1
+
+  path_edge_counts = [0] * len(overlapped_links)
+  for edge in path_edges:
+    edge_key = _normalize_edge(*edge)
+    for link_idx in edge_to_link_ids.get(edge_key, ()):
+      path_edge_counts[link_idx] += 1
+
+  malus -= EDGE_MALUS * redundancy_value * sum(
+    red_edge_counts[link_idx] * path_edge_counts[link_idx]
+    for link_idx in range(len(overlapped_links))
+  )
+  return malus
