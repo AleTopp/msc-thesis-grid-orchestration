@@ -1,4 +1,4 @@
-from _resiliency import PDC_PRIO_UNCHANGED, PDC_PRIO_FALSE, PDC_PRIO_TRUE, place_pdcs_resiliently, prefix_tree_from_pmu_paths, vec_idx_from_pmu_name
+from resiliency import PDC_PRIO_UNCHANGED, PDC_PRIO_FALSE, PDC_PRIO_TRUE, place_pdcs_resiliently, prefix_tree_from_pmu_paths, vec_idx_from_pmu_name
 from placement_pdc import place_pdcs_greedy
 from graph_model import create_graph
 from visualizer import draw_graph
@@ -72,21 +72,6 @@ def set_simple_red_role(G: nx.Graph, R):
                 r_of.append(f"PMU{j+1}")
         
         d["r_of"] = r_of
-
-def find_seed():
-    N, M = 4, 4
-    
-    for i in range(1000):
-        G = create_graph(seed=i, num_pmus=N+M, num_candidates=2*(N+M))
-        
-        links = 0
-        for n in G:
-            links += G.number_of_edges("CC", n)
-            
-        if links > 4:
-            continue
-        
-        print(f"FOUND. Seed: {i}")
 
 if __name__ == "__main__":
     main()

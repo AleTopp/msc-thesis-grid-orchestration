@@ -23,35 +23,8 @@ def place_pdcs_resiliently(
   pdc_prio: int = PDC_PRIO_UNCHANGED,
   debug: bool = False
 ):
-  PMUs = []
-  ePMUs = []
-  rPMUs = []
-  
-  for n, data in G.nodes(data=True):
-    if data.get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_PMU:
-      PMUs.append(n)
-      
-  if len(PMUs) == 0:
-      raise ValueError("No PMUs found.")
-
-  if isinstance(essentialPMUs, list):
-    ePMUs = [pmu for pmu in PMUs if pmu in essentialPMUs]
-    rPMUs = [pmu for pmu in PMUs if pmu not in essentialPMUs]
-    if len(ePMUs) == 0:
-      raise ValueError("No valid essential PMU found.")
+  PMUs, _, rPMUs = parse_pmus(G, essentialPMUs)
     
-  elif isinstance(essentialPMUs, int):
-    if essentialPMUs <= 0:
-      raise ValueError("essentialPMUs, as int, must be positive and non-zero.")
-    
-    ePMUs = [pmu for i, pmu in enumerate(PMUs) if i < essentialPMUs]
-    rPMUs = [pmu for i, pmu in enumerate(PMUs) if i >= essentialPMUs]
-    
-    if len(ePMUs) == 0:
-      raise ValueError("No valid essential PMU found.")
-  else:
-    raise ValueError("essentialPMUs must be of type list[str] or int")
-  
   greedyG = G.copy()
   greedyG.remove_nodes_from(rPMUs)
 
@@ -402,3 +375,35 @@ def top_tied(lst: list[tuple[float]], rel_tol: float = 1e-3):
     return []
   top = max(t[0] for t in lst)
   return [t for t in lst if math.isclose(t[0], top, rel_tol=rel_tol)]
+
+def parse_pmus(G: nx.Graph, essentialPMUs: list[str] | int) -> tuple[list[str], list[str], list[str]]:
+  PMUs = []
+  ePMUs = []
+  rPMUs = []
+  
+  for n, data in G.nodes(data=True):
+    if data.get(NODE_ROLE, ROLE_CANDIDATE) == ROLE_PMU:
+      PMUs.append(n)
+      
+  if len(PMUs) == 0:
+      raise ValueError("No PMUs found.")
+
+  if isinstance(essentialPMUs, list):
+    ePMUs = [pmu for pmu in PMUs if pmu in essentialPMUs]
+    rPMUs = [pmu for pmu in PMUs if pmu not in essentialPMUs]
+    if len(ePMUs) == 0:
+      raise ValueError("No valid essential PMU found.")
+    
+  elif isinstance(essentialPMUs, int):
+    if essentialPMUs <= 0:
+      raise ValueError("essentialPMUs, as int, must be positive and non-zero.")
+    
+    ePMUs = [pmu for i, pmu in enumerate(PMUs) if i < essentialPMUs]
+    rPMUs = [pmu for i, pmu in enumerate(PMUs) if i >= essentialPMUs]
+    
+    if len(ePMUs) == 0:
+      raise ValueError("No valid essential PMU found.")
+  else:
+    raise ValueError("essentialPMUs must be of type list[str] or int")
+  
+  return (PMUs, ePMUs, rPMUs)
