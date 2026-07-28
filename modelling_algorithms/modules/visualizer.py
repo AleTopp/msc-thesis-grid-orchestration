@@ -1,10 +1,9 @@
-import json
-
+from graph_model import EDGE_LATENCY, NODE_LATENCY, NODE_REDUNDANT_OF, NODE_ROLE, ROLE_PMU
 import matplotlib
-import matplotlib.pyplot as plt
-import networkx as nx
 from matplotlib.patches import Patch
+import matplotlib.pyplot as plt
 from pathlib import Path
+import networkx as nx
 import numpy as np
 import re
 
@@ -12,6 +11,14 @@ colors = [
     "crimson", "darkgreen", "royalblue", "goldenrod",
     "purple", "darkorange", "deeppink", "teal", "brown"
 ]
+
+def get_layout(G: nx.Graph, warn_print: bool = False):
+    try:
+        return nx.nx_pydot.pydot_layout(G, prog="dot")
+    except Exception:
+        if warn_print:
+            print("⚠️ Error with pydot layout, using spring layout instead.")
+        return nx.spring_layout(G, seed=42)
 
 def draw_graph(
     G: nx.Graph | nx.DiGraph, 
@@ -35,27 +42,24 @@ def draw_graph(
 
     plt.figure(figsize=(14, 10))
 
-    try:
-        if pos is None:
-            pos = nx.nx_pydot.pydot_layout(G, prog="dot")
-    except Exception:
-        print("⚠️ Error with pydot layout, using spring layout instead.")
-        pos = nx.spring_layout(G, seed=42)
+    if pos is None:
+        pos = get_layout(G)
 
-    edge_labels = nx.get_edge_attributes(G, "latency")
+    edge_labels = {edge: f"{float(lat or 0):.2f}" for edge, lat in nx.get_edge_attributes(G, EDGE_LATENCY).items()}
     node_colors = []
     node_labels = {}
     node_edgecolors = []
     red_pair = 1
+    NODE_COLOR = "pair"
 
     for n in G.nodes:
-        role = G.nodes[n].get("role")
-        r_of = G.nodes[n].get("r_of", [])
+        role = G.nodes[n].get(NODE_ROLE)
+        r_of = G.nodes[n].get(NODE_REDUNDANT_OF, [])
         label = n
 
         if n in pdcs:
             color = "orange"
-            label += f"\n{G.nodes[n].get('processing', 0)}"
+            label += f"\n{G.nodes[n].get(NODE_LATENCY, 0)}"
             edge_color = "black"
         elif role == "CC":
             color = "red"
@@ -69,10 +73,10 @@ def draw_graph(
             color = "lightblue"
             edge_color = "gray"
             
-        if len(r_of) > 0:
-            G.nodes[n]["pair"] = red_pair
+        if role == ROLE_PMU and G.nodes[n].get(NODE_COLOR) == None and len(r_of) > 0:
+            G.nodes[n][NODE_COLOR] = red_pair
             for nn in r_of:
-                G.nodes[nn]["pair"] = red_pair
+                G.nodes[nn][NODE_COLOR] = red_pair
             
             red_pair += 1
 
@@ -80,7 +84,7 @@ def draw_graph(
         node_labels[n] = label
         node_edgecolors.append(edge_color)
         
-    for i, (n, pair) in enumerate(G.nodes.data("pair", default=None)):
+    for i, (n, pair) in enumerate(G.nodes.data(NODE_COLOR, default=None)):
         if pair:
             node_colors[i] = colors[(pair-1) % len(colors)]
 
@@ -136,14 +140,14 @@ def draw_graph(
             for pmu, offset in zip(pmus, offsets):
                 idx = vec_idx_from_pmu_name(pmu)
                 color = colors[idx]
-                if view_mode == 3 and G.nodes[pmu].get("pair", None) is not None:
-                    color = colors[G.nodes[pmu].get("pair", -1) - 1]
+                if view_mode == 3 and G.nodes[pmu].get(NODE_COLOR, None) is not None:
+                    color = colors[G.nodes[pmu].get(NODE_COLOR, -1) - 1]
                 
                 _draw_offset_edge(ax, pos, a, b, color, offset)
 
     if paths:
         # Text box con i ritardi PMU -> CC (invariato)
-        all_pmus = [n for n in G.nodes if G.nodes[n].get("role") == "PMU"]
+        all_pmus = [n for n in G.nodes if G.nodes[n].get(NODE_ROLE) == ROLE_PMU]
         text = "Latency PMU → CC:\n"
         if max_latency is not None:
             text += f"Max required latency: {float(max_latency):.2f} ms\n"
