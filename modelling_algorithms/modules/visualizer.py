@@ -8,8 +8,11 @@ import numpy as np
 import re
 
 colors = [
-    "crimson", "darkgreen", "royalblue", "goldenrod",
-    "purple", "darkorange", "deeppink", "teal", "brown"
+    "crimson", "darkgreen",  "royalblue", "goldenrod",
+    "purple",  "darkorange", "deeppink",  "teal",      "brown",
+    "skyblue", "limegreen",  "magenta",   "sienna",
+    "navy",    "olive",      "cyan",      "fuchsia",
+    "khaki",   "salmon",     "orchid",    "slateblue"
 ]
 
 def get_layout(G: nx.Graph, warn_print: bool = False):
@@ -139,7 +142,7 @@ def draw_graph(
             
             for pmu, offset in zip(pmus, offsets):
                 idx = vec_idx_from_pmu_name(pmu)
-                color = colors[idx]
+                color = colors[idx % len(colors)]
                 if view_mode == 3 and G.nodes[pmu].get(NODE_COLOR, None) is not None:
                     color = colors[G.nodes[pmu].get(NODE_COLOR, -1) - 1]
                 
