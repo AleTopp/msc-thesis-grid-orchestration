@@ -9,12 +9,6 @@ This file is organized into three layers:
      redundant groups -> run exactly one algorithm -> return
      (pdcs, pmu_paths).
 """
-
-from operator import itemgetter
-from typing import Callable, Optional
-
-import networkx as nx
-
 from resiliency import calc_path_cost, parse_pmus, vec_idx_from_pmu_name
 from graph_model import (
     EDGE_LATENCY,
@@ -24,9 +18,13 @@ from graph_model import (
     NODE_ROLE,
     ROLE_CANDIDATE,
 )
+from operator import itemgetter
+from typing import Callable, Optional
+import networkx as nx
+import math
+
 
 LABEL_SUPERSOURCE = "temp0"
-
 
 # ============================================================
 # Shared helpers
@@ -146,7 +144,7 @@ def greedy_edge_disjoint_paths_by_removal(
     target: str,
     weight: Optional[Callable[[str, str, dict], float]] = None,
     k: int = 2,
-    max_latency: float = None,
+    max_latency: float = math.inf,
 ) -> list[list[str]]:
     """Repeatedly takes the current shortest path and deletes its edges before 
     searching again.
@@ -159,25 +157,28 @@ def greedy_edge_disjoint_paths_by_removal(
     if not nx.has_path(G, source, target):
         raise nx.NetworkXNoPath(f"No path from {source} to {target}")
 
-    working_graph = G.copy()
+    orig_G = G.copy()
     paths: list[list[str]] = []
 
     for i in range(k):
         try:
-            path = nx.shortest_path(working_graph, source=source, target=target, weight=weight)
+            path = nx.shortest_path(G, source=source, target=target, weight=weight)
         except nx.NetworkXNoPath:
             break
+        
         if len(path) < 2:
             break
-        if i == 0 and calc_path_cost(G, path) > max_latency:
+        elif i == 0 and calc_path_cost(orig_G, path) > max_latency:
             break   # Non esistono percorsi con la latenza richiesta
+        elif calc_path_cost(orig_G, path) > max_latency:
+            break   # Non esistono altri percorsi
 
         paths.append(path)
         for u, v in zip(path[:-1], path[1:]):
-            if working_graph.has_edge(u, v):
-                working_graph.remove_edge(u, v)
-            elif not working_graph.is_directed() and working_graph.has_edge(v, u):
-                working_graph.remove_edge(v, u)
+            if G.has_edge(u, v):
+                G.remove_edge(u, v)
+            elif not G.is_directed() and G.has_edge(v, u):
+                G.remove_edge(v, u)
 
     return paths
 
@@ -192,8 +193,8 @@ def greedy_edge_disjoint_paths_by_penalty(
     target: str,
     weight: Optional[Callable[[str, str, dict], float]] = None,
     k: int = 2,
-    scale_factor: float = 10,
-    max_latency: float = None,
+    scale_factor: float = 1000,
+    max_latency: float = math.inf,
 ) -> list[list[str]]:
     """Repeatedly takes the current shortest path and multiplies edge and node latency 
     before searching again, discouraging reuse on the next iteration.
@@ -206,27 +207,33 @@ def greedy_edge_disjoint_paths_by_penalty(
     if not nx.has_path(G, source, target):
         raise nx.NetworkXNoPath(f"No path from {source} to {target}")
 
-    working_graph = G.copy()
+    orig_G = G.copy()
     paths: list[list[str]] = []
 
-    for i in range(k):
+    i = 0
+    while len(paths) < k and i < G.number_of_nodes():
         try:
-            path = nx.shortest_path(working_graph, source=source, target=target, weight=weight)
+            path = nx.shortest_path(G, source=source, target=target, weight=weight)
         except nx.NetworkXNoPath:
             break
+        
         if len(path) < 2:
             break
-        if i == 0 and calc_path_cost(G, path) > max_latency:
+        elif i == 0 and calc_path_cost(orig_G, path) > max_latency:
             break   # Non esistono percorsi con la latenza richiesta
+        
+        i += 1
+        if calc_path_cost(orig_G, path) > max_latency:
+            continue
 
         paths.append(path)
 
         for u, v in zip(path[:-1], path[1:]):
-            working_graph.nodes[u][NODE_LATENCY] = scale_factor * working_graph.nodes[u].get(NODE_LATENCY, 0)
-            if working_graph.has_edge(u, v):
-                working_graph.edges[(u, v)][EDGE_LATENCY] = scale_factor * working_graph.edges[(u, v)].get(EDGE_LATENCY, 0)
-            elif not working_graph.is_directed() and working_graph.has_edge(v, u):
-                working_graph.edges[(v, u)][EDGE_LATENCY] = scale_factor * working_graph.edges[(v, u)].get(EDGE_LATENCY, 0)
+            G.nodes[u][NODE_LATENCY] = scale_factor * G.nodes[u].get(NODE_LATENCY, 0)
+            if G.has_edge(u, v):
+                G.edges[(u, v)][EDGE_LATENCY] = scale_factor * G.edges[(u, v)].get(EDGE_LATENCY, 0)
+            elif not G.is_directed() and G.has_edge(v, u):
+                G.edges[(v, u)][EDGE_LATENCY] = scale_factor * G.edges[(v, u)].get(EDGE_LATENCY, 0)
 
     return paths
 
@@ -709,10 +716,10 @@ def place_pdcs_greedy_edge_removal(G: nx.Graph, max_latency: float, essential_pm
     groups = build_redundant_pmu_groups(ePMUs, R)
 
     all_paths = []
-    for _, group in groups.items():
+    for group in groups.values():
         Gcopy = with_super_source(G, group)
         weight_fn = make_path_weight_function(Gcopy, LABEL_SUPERSOURCE)
-        for path in greedy_edge_disjoint_paths_by_removal(Gcopy, LABEL_SUPERSOURCE, LABEL_CC, weight=weight_fn, k=2, max_latency=max_latency):
+        for path in greedy_edge_disjoint_paths_by_removal(Gcopy, LABEL_SUPERSOURCE, LABEL_CC, weight=weight_fn, k=len(group), max_latency=max_latency):
             path.pop(0)
             all_paths.append(path)
 
@@ -725,10 +732,10 @@ def place_pdcs_greedy_edge_penalty(G: nx.Graph, max_latency: float, essential_pm
     groups = build_redundant_pmu_groups(ePMUs, R)
 
     all_paths = []
-    for _, group in groups.items():
+    for group in groups.values():
         Gcopy = with_super_source(G, group)
         weight_fn = make_path_weight_function(Gcopy, LABEL_SUPERSOURCE)
-        for path in greedy_edge_disjoint_paths_by_penalty(Gcopy, LABEL_SUPERSOURCE, LABEL_CC, weight=weight_fn, k=2, max_latency=max_latency):
+        for path in greedy_edge_disjoint_paths_by_penalty(Gcopy, LABEL_SUPERSOURCE, LABEL_CC, weight=weight_fn, k=len(group), max_latency=max_latency):
             path.pop(0)
             all_paths.append(path)
 
