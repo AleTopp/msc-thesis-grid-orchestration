@@ -56,6 +56,9 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         "pos": get_layout(G),
         "view_mode": 3,
     }
+
+    crashing_node = random.choice([n for n, role in G.nodes(data=NODE_ROLE, default=ROLE_CANDIDATE) if role == ROLE_CANDIDATE])
+    crashing_edge = random.choice([e for e in G.edges()])
     
     # === Helper functions ===
     
@@ -80,11 +83,12 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         draw_graph(G, pdcs=pdcs, paths=pmu_paths, **params_draw)
         if func is not None:
             evaluate_paths(G, pdcs, pmu_paths, delta_t=delta_time, name=out_name)
+            crash_and_eval(pmu_paths, name=out_name)
         
     def evaluate_paths(G: nx.Graph, pdcs: set, pmu_paths: dict, delta_t: datetime.timedelta, name: str, output_path: str = f"{dir}/metrics.txt"):
-        lines = []
-        R = params["R"]
         essentialPMUs = params["essentialPMUs"]
+        R = params["R"]
+        lines = []
         
         # === Valutazioni statiche ===
         lines.append(f"== Static evaluations for {name} ==")
@@ -117,6 +121,72 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
             lines.append(f"{i} Flow{'s' if i > 1 else ' '} | {len(edges)} ({perc}%)")
         
         lines.append("\n")
+        with open(output_path, mode='+a') as f:
+            f.writelines([f"{l}\n" for l in lines])
+
+    def crash_and_eval(pmu_paths: dict, name: str, output_path: str = f"{dir}/metrics.txt"):
+        essentialPMUs = params["essentialPMUs"]
+        R = params["R"]
+        lines = []
+
+        # === Valutazioni dinamiche ===
+        lines.append(f"== Dynamic evaluations for {name} ==")
+
+        # 1) Nodo crashato
+        lines.append(f"Crashing node: {crashing_node}")
+        node_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
+        for pmu, path in (pmu, val["path"] for pmu, val in pmu_paths.items()):
+            if crashing_node in path:
+                node_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+
+        # 1a) Quanti flussi arrivano ancora al CC
+        lines.append(f"% of data which arrives at CC: {sum(v for v in node_crash_results.values())}")
+
+        # 1b) Quanti flussi indipendenti arrivano ancora al CC (in 1 o 2+ copie)
+        ePMUs = [LABEL_PMU(i+1) for i in range(int(essentialPMUs))]
+        groups_dict = build_redundant_pmu_groups(ePMUs, R)
+        res = sum(
+            1
+            for group in groups_dict.values()
+            if sum(node_crash_results[pmu] for pmu in group) > 0
+        )
+        lines.append(f"% of data which arrives in 1 copies: {round(100*res/len(ePMUs), 2)}%")
+        res = sum(
+            1
+            for group in groups_dict.values()
+            if sum(node_crash_results[pmu] for pmu in group) > 1
+        )
+        lines.append(f"% of data which arrives in 2+ copies: {round(100*res/len(ePMUs), 2)}%")
+
+
+        # 2) Arco crashato
+        lines.append(f"\nCrashing edge: {crashing_edge}\n")
+        edge_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
+        for pmu, path in (pmu, val["path"] for pmu, val in pmu_paths.items()):
+            path_edges = zip(path[:-1], path[1:])
+            if crashing_edge in path_edges:
+                edge_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+
+        # 2a) Quanti flussi arrivano ancora al CC
+        lines.append(f"% of data which arrives at CC: {sum(v for v in node_crash_results.values())}")
+
+        # 2b) Quanti flussi indipendenti arrivano ancora al CC (in 1 o 2+ copie)
+        ePMUs = [LABEL_PMU(i+1) for i in range(int(essentialPMUs))]
+        groups_dict = build_redundant_pmu_groups(ePMUs, R)
+        res = sum(
+            1
+            for group in groups_dict.values()
+            if sum(node_crash_results[pmu] for pmu in group) > 0
+        )
+        lines.append(f"% of data which arrives in 1 copies: {round(100*res/len(ePMUs), 2)}%")
+        res = sum(
+            1
+            for group in groups_dict.values()
+            if sum(node_crash_results[pmu] for pmu in group) > 1
+        )
+        lines.append(f"% of data which arrives in 2+ copies: {round(100*res/len(ePMUs), 2)}%")
+
+        lines.append("----------------------------\n")
         with open(output_path, mode='+a') as f:
             f.writelines([f"{l}\n" for l in lines])
     
