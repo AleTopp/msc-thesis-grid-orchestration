@@ -15,6 +15,8 @@ colors = [
     "khaki",   "salmon",     "orchid",    "slateblue"
 ]
 
+noninteractive_warning_shown = False
+
 def get_layout(G: nx.Graph, warn_print: bool = False):
     try:
         return nx.nx_pydot.pydot_layout(G, prog="dot")
@@ -211,10 +213,12 @@ def draw_graph(
     if backend not in {"agg", "pdf", "ps", "svg"}:
         plt.show(block=False)
     else:
-        print(
-            f"ℹ️  Matplotlib backend '{backend}' is non-interactive.\n"
-            f"   Graph saved to \"{output_path}\"."
-        )
+        global noninteractive_warning_shown
+        if not noninteractive_warning_shown:
+            print(f"ℹ️  Matplotlib backend '{backend}' is non-interactive.\n")
+            noninteractive_warning_shown = True
+
+        print(f"Graph saved to \"{output_path}\".")
 
     plt.close()
 
