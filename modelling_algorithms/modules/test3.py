@@ -135,7 +135,7 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         # 1) Nodo crashato
         lines.append(f"Crashing node: {crashing_node}")
         node_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
-        for pmu, path in (pmu, val["path"] for pmu, val in pmu_paths.items()):
+        for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
             if crashing_node in path:
                 node_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
 
@@ -162,7 +162,7 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         # 2) Arco crashato
         lines.append(f"\nCrashing edge: {crashing_edge}\n")
         edge_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
-        for pmu, path in (pmu, val["path"] for pmu, val in pmu_paths.items()):
+        for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
             path_edges = zip(path[:-1], path[1:])
             if crashing_edge in path_edges:
                 edge_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
