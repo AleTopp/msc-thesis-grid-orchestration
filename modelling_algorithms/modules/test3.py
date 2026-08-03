@@ -98,7 +98,10 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         lines.append(f"== Static evaluations for {name} ==")
         # 1) Numero di PDCs
         lines.append(f"Number of PDCs: {len(pdcs)}")
-        # 2) Percentuale di dati resilienti
+        # 2a) Percentuale di dati che arrivano
+        flows = 100*sum(1 for v in pmu_paths.values() if v["path"])/R.shape[0]
+        lines.append(f"% of data which arrives at CC: {round(flows, 2)}%")
+        # 2b) Percentuale di dati resilienti
         ePMUs = [LABEL_PMU(i+1) for i in range(int(essentialPMUs))]
         groups_dict = build_redundant_pmu_groups(ePMUs, R)
         res = sum(
@@ -124,7 +127,7 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
             perc = round(100*len(edges) / G.number_of_edges(), 2)
             lines.append(f"{i} Flow{'s' if i > 1 else ' '} | {len(edges)} ({perc}%)")
         
-        lines.append("\n")
+        lines.append("")
         with open(output_path, mode='+a') as f:
             f.writelines([f"{l}\n" for l in lines])
 
@@ -137,6 +140,7 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
 
         # === Valutazioni dinamiche ===
         lines = [f"== Dynamic evaluations for {name} =="]
+        flows_before = 100*sum(1 for v in pmu_paths.values() if v["path"])/R.shape[0]
 
         # 1) Nodo crashato
         lines.append(f"Crashing node: {crashing_node}")
@@ -146,7 +150,8 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
                 node_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
 
         # 1a) Quanti flussi arrivano ancora al CC
-        lines.append(f"% of data which arrives at CC: {sum(v for v in node_crash_results.values())}")
+        flows_now = 100*sum(v for v in node_crash_results.values())/R.shape[0]
+        lines.append(f"% of data which still arrives at CC: {round(flows_now, 2)} (before was {round(flows_before, 2)}%)")
 
         # 1b) Quanti flussi indipendenti arrivano ancora al CC (in 1 o 2+ copie)
         res = sum(
@@ -164,7 +169,7 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
 
 
         # 2) Arco crashato
-        lines.append(f"\nCrashing edge: {crashing_edge}\n")
+        lines.append(f"\nCrashing edge: {crashing_edge}")
         edge_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
         for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
             path_edges = zip(path[:-1], path[1:])
@@ -172,7 +177,8 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
                 edge_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
 
         # 2a) Quanti flussi arrivano ancora al CC
-        lines.append(f"% of data which arrives at CC: {sum(v for v in edge_crash_results.values())}")
+        flows_now = 100*sum(v for v in edge_crash_results.values())/R.shape[0]
+        lines.append(f"% of data which still arrives at CC: {round(flows_now, 2)}% (before was {round(flows_before, 2)}%)")
 
         # 2b) Quanti flussi indipendenti arrivano ancora al CC (in 1 o 2+ copie)
         res = sum(
@@ -188,7 +194,7 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         )
         lines.append(f"% of independent data which arrives in 2+ copies: {round(100*res/len(ePMUs), 2)}%")
 
-        lines.append("----------------------------\n")
+        lines.append("----------------------------\n\n")
         with open(output_path, mode='+a') as f:
             f.writelines([f"{l}\n" for l in lines])
     
@@ -259,6 +265,7 @@ def main():
     
     # Graph sizes (num_candidates) to check
     sizes = [8, 10]
+    # sizes = [...]
     
     for size in sizes:
         params["num_candidates"] = size
