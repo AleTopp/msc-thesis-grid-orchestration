@@ -441,7 +441,6 @@ def min_cost_flow_least_overlap_pair(
     node_a: str,
     node_b: str,
     target: str,
-    weight_fn: Optional[Callable[[str, str, dict], float]] = None,
     latency_scale: int = 10**3,
 ):
     """
@@ -450,7 +449,7 @@ def min_cost_flow_least_overlap_pair(
     (networkx's own docs warn that floating-point weights can make it
     cycle forever due to rounding). Real-valued latencies broke that
     guarantee -- this is what caused the infinite loop. Fixed by scaling
-    every weight to an integer via `latency_scale` (default 1e6) before
+    every weight to an integer via `latency_scale` (default 1e3) before
     building the flow network. Raise `latency_scale` if your latencies
     need more decimal precision than that.
     """
@@ -458,10 +457,6 @@ def min_cost_flow_least_overlap_pair(
         raise ValueError("node_a, node_b, target must all be nodes of the graph")
     if len({node_a, node_b, target}) < 3:
         raise ValueError("node_a, node_b, target must be three distinct nodes")
-
-    if weight_fn is None:
-        def weight_fn(n1, n2, edge_data):
-            return edge_data.get(EDGE_LATENCY, 0)
 
     def integer_latency(edge_data):
         return round(edge_data.get(EDGE_LATENCY, 0) * latency_scale)
@@ -503,6 +498,8 @@ def min_cost_flow_least_overlap_pair(
             x_out = vout(x)
             y_in = target if y == target else vin(y)
             latency = integer_latency(edge_data)
+            if u != LABEL_SUPERSOURCE and u != node_a and u != node_b:
+                latency += round(G.nodes[u].get(NODE_LATENCY, 0) * latency_scale)
 
             H.add_edge(x_out, y_in, capacity=1, weight=latency)
             dummy_e = (x, y, "dummy_edge")
@@ -762,7 +759,7 @@ def place_pdcs_suurballe(G: nx.Graph, max_latency: float, essential_pmus, R):
 def place_pdcs_min_cost_flow_overlap(G: nx.Graph, max_latency: float, essential_pmus, R):
     """Inherently pairwise (one epmu + one redundant pmu -> two paths to
     the CC). If an essential PMU has more than one redundant PMU, only the
-    first is paired (same limitation as before)."""
+    first is paired."""
     _, ePMUs, _ = parse_pmus(G, essential_pmus)
     groups = build_redundant_pmu_groups(ePMUs, R)
     weight_fn = make_path_weight_function(G, LABEL_SUPERSOURCE)
@@ -792,9 +789,11 @@ def place_pdcs_bhandari(G: nx.Graph, max_latency: float, essential_pmus, R, k: i
 
 
 def place_pdcs_k_shortest_candidates(G: nx.Graph, max_latency: float, essential_pmus, R, K: int = 5):
-    """Same known limitation as before: with multiple redundant PMUs per
-    essential PMU, only the first pairing is fixed (would need a
-    recursive/joint assignment to fix properly)."""
+    """Limitation: with multiple redundant PMUs per
+    essential PMU, only the first rPMU path is placed.
+    If there is some correlation between ePMUs, then
+    some paths may not be placed.
+    (maybe use recursion to fix properly)."""
     PMUs, ePMUs, _ = parse_pmus(G, essential_pmus)
     candidate_paths = {pmu: k_shortest_candidate_paths(G, pmu, LABEL_CC, K, max_latency) for pmu in PMUs}
 
@@ -810,5 +809,6 @@ def place_pdcs_k_shortest_candidates(G: nx.Graph, max_latency: float, essential_
             best_a, best_b = best_candidate_pair(candidate_paths[epmu], candidate_paths[rpmu])
             fixed_paths[epmu] = best_a
             fixed_paths[rpmu] = best_b
+            break
 
     return collect_pdcs_and_pmu_paths(G, list(fixed_paths.values()))
