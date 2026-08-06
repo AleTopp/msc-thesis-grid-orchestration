@@ -91,7 +91,7 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
             draw_graph(G, pdcs=pdcs, paths=pmu_paths, **params_draw)
             
         if result is not None:
-            with open(f"{dir}/{out_name}.json") as f:
+            with open(f"{dir}/{out_name}.json", mode='w') as f:
                 s = json.dumps(pmu_paths, indent=2)
                 f.write(s)
                 

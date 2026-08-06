@@ -146,7 +146,7 @@ def draw_graph(
                 idx = vec_idx_from_pmu_name(pmu)
                 color = colors[idx % len(colors)]
                 if view_mode == 3 and G.nodes[pmu].get(NODE_COLOR, None) is not None:
-                    color = colors[G.nodes[pmu].get(NODE_COLOR, -1) - 1]
+                    color = colors[(G.nodes[pmu].get(NODE_COLOR, -1) - 1) % len(colors)]
                 
                 _draw_offset_edge(ax, pos, a, b, color, offset)
 
