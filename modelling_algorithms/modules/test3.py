@@ -63,6 +63,16 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
     crashing_node = random.choice([n for n, role in G.nodes(data=NODE_ROLE, default=ROLE_CANDIDATE) if role == ROLE_CANDIDATE])
     crashing_edge = random.choice([e for e in G.edges()])
     
+    crashing_seq_nodes = [n for n, role in G.nodes(data=NODE_ROLE, default=ROLE_CANDIDATE) if role == ROLE_CANDIDATE]
+    crashing_seq_edges = [e for e in G.edges()]
+    random.shuffle(crashing_seq_nodes)
+    random.shuffle(crashing_seq_edges)
+    crashing_seq_nodes = crashing_seq_nodes[:size]
+    crashing_seq_edges = crashing_seq_edges[:size]
+    
+    crashing_seq = [*crashing_seq_nodes, *crashing_seq_edges]
+    random.shuffle(crashing_seq)
+    
     # === Helper functions ===
     
     def change_out(func_name: str):
@@ -219,7 +229,7 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
         edge_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
         for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
             path_edges = zip(path[:-1], path[1:])
-            if crashing_edge in path_edges:
+            if crashing_edge in path_edges or tuple(reversed(crashing_edge)) in path_edges:
                 edge_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
 
         # 2a) Quanti flussi arrivano ancora al CC
@@ -240,6 +250,32 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
             if sum(edge_crash_results.get(pmu, 0) for pmu in group) > 1
         )
         lines.append(f"% of independent data which arrives in 2+ copies: {round(100*res/len(ePMUs), 2)}%")
+        
+        # 3) Quanti failure prima di perdere osservabilità (un gruppo di resilienza)? (MTTF)
+        lines.append(f"\nCrashing sequence: {crashing_seq}")
+        seq_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
+        ttf = None
+        for i, fail in enumerate(crashing_seq):
+            if type(fail) == str:
+                for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
+                    if fail in path:
+                        seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+            else:
+                for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
+                    path_edges = zip(path[:-1], path[1:])
+                    if fail in path_edges or tuple(reversed(fail)) in path_edges:
+                        seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+            
+            res = sum(
+                1
+                for group in groups_dict.values()
+                if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+            )
+            if res < len(groups_dict):
+                ttf = i + 1   # Se fallisce all'indice 0, il numero di failure necessari è 1
+                break
+        
+        lines.append(f"Time (no. of link/edge faults) To Failure (of Observability): {ttf if not None else f">{len(crashing_seq)}"}")
 
         lines.append("----------------------------\n\n")
         with open(output_path, mode='+a') as f:
@@ -256,7 +292,7 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
                 # latency_epmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in ePMUs],
                 # latency_rpmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in rPMUs],
                 # jain_index = jain_index,
-                mttf = None,
+                ttf = ttf,
                 flows_after_node = node_res,
                 flows_after_edge = edge_res,
             )
@@ -283,7 +319,7 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
                     "rPMUs": []
                 },
                 "jain_indexes": [],
-                "mean_time_to_failure": [],
+                "times_to_failure": [],
                 "independent_data_flows_after_1_node_fail": [],
                 "independent_data_flows_after_1_edge_fail": [],
             }
@@ -293,7 +329,7 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
             "pdcs_num": "pdcs_nums",
             "execution_time": "execution_times",
             "jain_index": "jain_indexes",
-            "mttf": "mean_time_to_failure",
+            "ttf": "times_to_failure",
             "flows_after_node": "independent_data_flows_after_1_node_fail",
             "flows_after_edge": "independent_data_flows_after_1_edge_fail",
         }
@@ -370,12 +406,13 @@ def main():
     random.seed(STARTING_SEED)
 
     # Random or specific seeds
+    # seeds = [random.randrange(0, 1000) for _ in range(10)]
     seeds = [random.randrange(0, 1000) for _ in range(20)]
     # seeds = [...]
     
     # Graph sizes (num_candidates) to check
     sizes = [10, 20, 30, 40, 50]
-    # sizes = [...]
+    # sizes = [8]
     
     metrics_dict = {}
     skipped = []
