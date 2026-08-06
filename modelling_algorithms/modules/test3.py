@@ -51,6 +51,8 @@ def test_case(_params: dict[str, str], metrics: dict[str, list], skipped: list[t
     exec_placing(G, all_params, metrics, skipped)
     
 def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, list], skipped: list[tuple]):
+    size = int(all_params["num_candidates"])
+    seed = int(all_params["seed"])
     dir = all_params["out_dir"]
     params_draw = {
         "max_latency": all_params["max_latency"],
@@ -75,7 +77,7 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
                 result = func(G, **params)
             except (KeyboardInterrupt, _TimeoutException):
                 print(f"⚠⚠ Skipped function: {dir}/{out_name}.png ⚠⚠")
-                skipped.append((all_params["num_candidates"], all_params["seed"], out_name, "Timeout"))
+                skipped.append((size, seed, out_name, "Timeout"))
                 result = None
             after = datetime.datetime.now()
             delta_time = after - before
@@ -152,10 +154,10 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
             
             
             append_to_metrics(
-                size = all_params["num_candidates"],
+                size = size,
                 algorithm = name,
                 
-                seed = all_params["seed"],
+                seed = seed,
                 pdcs_num = len(pdcs),
                 execution_time = delta_t / datetime.timedelta(milliseconds=1),
                 latency_epmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in ePMUs],
@@ -167,12 +169,12 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
             )
         else:
             append_to_metrics(
-                size = all_params["num_candidates"],
+                size = size,
                 algorithm = name,
                 
                 drop = True
             )
-            skipped.append((all_params["num_candidates"], all_params["seed"], name, "Incomplete"))
+            skipped.append((size, seed, name, "Incomplete"))
 
     def crash_and_eval(pmu_paths: dict, name: str, output_path: str = f"{dir}/metrics.txt"):
         essentialPMUs = all_params["essentialPMUs"]
@@ -245,10 +247,10 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
             
         if sum(1 for v in pmu_paths.values() if v["path"]) == R.shape[0]:
             append_to_metrics(
-                size = all_params["num_candidates"],
+                size = size,
                 algorithm = name,
                 
-                # seed = all_params["seed"],
+                # seed = seed,
                 # pdcs_num = len(pdcs),
                 # execution_time = delta_t / datetime.timedelta(milliseconds=1),
                 # latency_epmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in ePMUs],
