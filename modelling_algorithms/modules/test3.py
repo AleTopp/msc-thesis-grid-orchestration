@@ -1,6 +1,8 @@
+import json
+
 from graph_model import NODE_REDUNDANT_OF, ROLE_PMU, create_graph
 from visualizer import draw_graph, get_layout
-from placement_pdc import place_pdcs_greedy
+from placement_pdc import _TimeoutException, place_pdcs_greedy
 from resiliency import PDC_PRIO_UNCHANGED, place_pdcs_resiliently, vec_idx_from_pmu_name
 from resiliency2 import *
 from collections import Counter
@@ -10,7 +12,7 @@ import re, math, random, datetime
 
 G: nx.Graph = None
 
-def test_case(_params: dict[str, str], candidates_to_pmu_ratio: float = 1):
+def test_case(_params: dict[str, str], metrics: dict[str, list], skipped: list[tuple], candidates_to_pmu_ratio: float = 1):
     x =  _params["num_candidates"] / (2 * candidates_to_pmu_ratio)
     
     N, M = math.ceil(x), math.floor(x)
@@ -27,7 +29,7 @@ def test_case(_params: dict[str, str], candidates_to_pmu_ratio: float = 1):
     )
     set_simple_red_role(G, R)
     
-    params = {
+    all_params = {
         "seed": _params["seed"],
         "num_candidates": _params["num_candidates"],
         "cc_max_links": _params["cc_max_links"], 
@@ -44,15 +46,14 @@ def test_case(_params: dict[str, str], candidates_to_pmu_ratio: float = 1):
         "cc_successors_constraint": _params["cc_successors_constraint"],
         "pdc_prio": _params["pdc_prio"],
         "K": _params["K"],
-        "out_dir": f"{_params["out_dir"].replace(" ", "/").replace(":", "-")}/nc{_params["num_candidates"]}_s{_params["seed"]}",
+        "out_dir": f"{_params["out_dir"]}/nc{_params["num_candidates"]}_s{_params["seed"]}",
     }
-    #print(f"params: {params}")
-    exec_placing(G, params)
+    exec_placing(G, all_params, metrics, skipped)
     
-def exec_placing(G: nx.Graph, params: dict[str, str]):
-    dir = params["out_dir"]
+def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, list], skipped: list[tuple]):
+    dir = all_params["out_dir"]
     params_draw = {
-        "max_latency": params["max_latency"],
+        "max_latency": all_params["max_latency"],
         "pos": get_layout(G),
         "view_mode": 3,
     }
@@ -72,8 +73,9 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
             before = datetime.datetime.now()
             try:
                 result = func(G, **params)
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, _TimeoutException):
                 print(f"⚠⚠ Skipped function: {dir}/{out_name}.png ⚠⚠")
+                skipped.append((all_params["num_candidates"], all_params["seed"], out_name, "Timeout"))
                 result = None
             after = datetime.datetime.now()
             delta_time = after - before
@@ -82,16 +84,23 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         if result is not None:
             pdcs = result[0]
             pmu_paths = result[1]
+        
+        # Disegnare tutti i grafi comporta notevole quantità di tempo e spazio in più
+        if func is None:
+            change_out(out_name)
+            draw_graph(G, pdcs=pdcs, paths=pmu_paths, **params_draw)
             
-        change_out(out_name)
-        draw_graph(G, pdcs=pdcs, paths=pmu_paths, **params_draw)
         if result is not None:
+            with open(f"{dir}/{out_name}.json") as f:
+                s = json.dumps(pmu_paths, indent=2)
+                f.write(s)
+                
             evaluate_paths(G, pdcs, pmu_paths, delta_t=delta_time, name=out_name)
             crash_and_eval(pmu_paths, name=out_name)
         
     def evaluate_paths(G: nx.Graph, pdcs: set, pmu_paths: dict, delta_t: datetime.timedelta, name: str, output_path: str = f"{dir}/metrics.txt"):
-        essentialPMUs = params["essentialPMUs"]
-        R = params["R"]
+        essentialPMUs = all_params["essentialPMUs"]
+        R = all_params["R"]
         lines = []
         
         # === Valutazioni statiche ===
@@ -112,12 +121,19 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         lines.append(f"% of data which arrives in 2+ copies: {round(100*res/len(ePMUs), 2)}%")
         # 3) Tempo di convergenza
         lines.append(f"Execution time: {str(delta_t)}")
-        # 4) Archi vs Numero di flussi di dati
+        # 4) Jain index per la fairness degli edge
+        all_edges = [tuple(sorted((u, v))) for u, v in G.edges()]
         edge_counts = Counter(
             tuple(sorted((u, v)))
             for path in (val["path"] for val in pmu_paths.values())
             for u, v in zip(path[:-1], path[1:])
         )
+        values = [edge_counts.get(edge, 0) for edge in all_edges]
+        sum_x = sum(values)
+        sum_x2 = sum(x * x for x in values)
+        jain_index = (sum_x ** 2) / (len(values) * sum_x2) if sum_x2 > 0 else 1.0
+        lines.append(f"Jain index (edge fairness): {round(jain_index, 4)}")
+        # 5) Archi vs Numero di flussi di dati
         reverse_edges = {
             count: [edge for edge, value in edge_counts.items() if value == count]
             for count in set(edge_counts.values())
@@ -130,10 +146,37 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         lines.append("")
         with open(output_path, mode='+a') as f:
             f.writelines([f"{l}\n" for l in lines])
+        
+        if flows == 100: # Se non arrivano tutti, scartiamo il seed
+            rPMUs = [LABEL_PMU(i+1) for i in range(int(R.shape[0])) if LABEL_PMU(i+1) not in ePMUs]
+            
+            
+            append_to_metrics(
+                size = all_params["num_candidates"],
+                algorithm = name,
+                
+                seed = all_params["seed"],
+                pdcs_num = len(pdcs),
+                execution_time = delta_t / datetime.timedelta(milliseconds=1),
+                latency_epmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in ePMUs],
+                latency_rpmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in rPMUs],
+                jain_index = jain_index,
+                # mttf = None,
+                # flows_after_node = None,
+                # flows_after_edge = None,
+            )
+        else:
+            append_to_metrics(
+                size = all_params["num_candidates"],
+                algorithm = name,
+                
+                drop = True
+            )
+            skipped.append((all_params["num_candidates"], all_params["seed"], name, "Incomplete"))
 
     def crash_and_eval(pmu_paths: dict, name: str, output_path: str = f"{dir}/metrics.txt"):
-        essentialPMUs = params["essentialPMUs"]
-        R = params["R"]
+        essentialPMUs = all_params["essentialPMUs"]
+        R = all_params["R"]
 
         ePMUs = [LABEL_PMU(i+1) for i in range(int(essentialPMUs))]
         groups_dict = build_redundant_pmu_groups(ePMUs, R)
@@ -159,6 +202,7 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
             for group in groups_dict.values()
             if sum(node_crash_results.get(pmu, 0) for pmu in group) > 0
         )
+        node_res = res
         lines.append(f"% of independent data which arrives in 1 copies: {round(100*res/len(ePMUs), 2)}%")
         res = sum(
             1
@@ -186,6 +230,7 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
             for group in groups_dict.values()
             if sum(edge_crash_results.get(pmu, 0) for pmu in group) > 0
         )
+        edge_res = res
         lines.append(f"% of independent data which arrives in 1 copies: {round(100*res/len(ePMUs), 2)}%")
         res = sum(
             1
@@ -197,39 +242,102 @@ def exec_placing(G: nx.Graph, params: dict[str, str]):
         lines.append("----------------------------\n\n")
         with open(output_path, mode='+a') as f:
             f.writelines([f"{l}\n" for l in lines])
+            
+        if sum(1 for v in pmu_paths.values() if v["path"]) == R.shape[0]:
+            append_to_metrics(
+                size = all_params["num_candidates"],
+                algorithm = name,
+                
+                # seed = all_params["seed"],
+                # pdcs_num = len(pdcs),
+                # execution_time = delta_t / datetime.timedelta(milliseconds=1),
+                # latency_epmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in ePMUs],
+                # latency_rpmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in rPMUs],
+                # jain_index = jain_index,
+                mttf = None,
+                flows_after_node = node_res,
+                flows_after_edge = edge_res,
+            )
+            
+    def append_to_metrics(**info):
+        size = info["size"]
+        algo = info["algorithm"]
+        if not size or not algo:
+            raise ValueError("metrics key not provided")
+        
+        if info.get("drop", False) == True:
+            return
+
+        if (size, algo) not in metrics:
+            metrics[(size, algo)] = {
+                "size": size,
+                "algorithm": algo,
+                
+                "seeds": [],
+                "pdcs_nums": [],
+                "execution_times": [],
+                "latency_distribution": {
+                    "ePMUs": [],
+                    "rPMUs": []
+                },
+                "jain_indexes": [],
+                "mean_time_to_failure": [],
+                "independent_data_flows_after_1_node_fail": [],
+                "independent_data_flows_after_1_edge_fail": [],
+            }
+            
+        unitary_fields = {
+            "seed": "seeds",
+            "pdcs_num": "pdcs_nums",
+            "execution_time": "execution_times",
+            "jain_index": "jain_indexes",
+            "mttf": "mean_time_to_failure",
+            "flows_after_node": "independent_data_flows_after_1_node_fail",
+            "flows_after_edge": "independent_data_flows_after_1_edge_fail",
+        }
+        
+        for src, dst in unitary_fields.items():
+            metrics[(size, algo)][dst].extend([info[src]] if src in info else [])
+            
+        metrics[(size, algo)]["latency_distribution"]["ePMUs"].extend(info.get("latency_epmus", []))
+        metrics[(size, algo)]["latency_distribution"]["rPMUs"].extend(info.get("latency_rpmus", []))
+
     
     # ==== Execution ====
     run_and_save(None, "0_graph")
     
     params_greedy = {
-        "max_latency": params["max_latency"],
-        "flag_splitting": params["flag_splitting"],
+        "max_latency": all_params["max_latency"],
+        "flag_splitting": all_params["flag_splitting"],
     }
     run_and_save(place_pdcs_greedy, "00_greedy", **params_greedy)
     
     params_resilient = {
-        "max_latency": params["max_latency"],
-        "essentialPMUs": params["essentialPMUs"],
-        "v": params["v"],
-        "R": params["R"],
-        "parchi_constraint": params["parchi_constraint"],
-        "cc_successors_constraint": params["cc_successors_constraint"],
-        "pdc_prio": params["pdc_prio"],
+        "max_latency": all_params["max_latency"],
+        "essentialPMUs": all_params["essentialPMUs"],
+        "v": all_params["v"],
+        "R": all_params["R"],
+        "parchi_constraint": all_params["parchi_constraint"],
+        "cc_successors_constraint": all_params["cc_successors_constraint"],
+        "pdc_prio": all_params["pdc_prio"],
     }
     run_and_save(place_pdcs_resiliently, "1_resilient", **params_resilient)
 
     params_others = {
-        "max_latency": params["max_latency"],
-        "essential_pmus": params["essentialPMUs"],
-        "R": params["R"],
+        "max_latency": all_params["max_latency"],
+        "essential_pmus": all_params["essentialPMUs"],
+        "R": all_params["R"],
     }
     run_and_save(place_pdcs_greedy_edge_penalty, "2_greedy-edge-penalty", **params_others)
     run_and_save(place_pdcs_min_cost_flow_overlap, "3_tiered-min-cost", **params_others)
-    run_and_save(place_pdcs_k_shortest_candidates, f"4_k({params["K"]})-shortest-candidates", **params_others, K=params["K"])
+    run_and_save(place_pdcs_k_shortest_candidates, f"4_k({all_params["K"]})-shortest-candidates", **params_others, K=all_params["K"])
 
 
 def main():
+    STARTING_TIME = datetime.datetime.now()
     STARTING_SEED = 42
+    OUT_DIR = f"runtime_results/{str(STARTING_TIME)}".replace(" ", "/").replace(":", "-")
+    
     # Graph
     EDGE_LAT_MIN = 1
     EDGE_LAT_MAX = 3
@@ -240,7 +348,7 @@ def main():
     CONSIDER_NEIGH = True
     PAR_CHI = False
     PDC_PRIO = PDC_PRIO_UNCHANGED       # (Non cambia davvero nulla, bisognerebbe fare a ~~parità di latenza allora prio)
-    
+                                        # Se risultati mostrano troppi PDC magari aggiustiamo
     # All
     params = {
         #"seed": SEED,
@@ -254,18 +362,21 @@ def main():
         "cc_successors_constraint": (not CONSIDER_NEIGH),
         "pdc_prio": PDC_PRIO,
         #"K": int(CANDIDATES/2) + 1,
-        "out_dir": f"output/{str(datetime.datetime.now())}",
+        "out_dir": OUT_DIR,
     }
     
     random.seed(STARTING_SEED)
 
     # Random or specific seeds
-    seeds = [random.randrange(0, 1000) for _ in range(10)]
+    seeds = [random.randrange(0, 1000) for _ in range(20)]
     # seeds = [...]
     
     # Graph sizes (num_candidates) to check
-    sizes = [8, 10]
+    sizes = [10, 20, 30, 40, 50]
     # sizes = [...]
+    
+    metrics_dict = {}
+    skipped = []
     
     for size in sizes:
         params["num_candidates"] = size
@@ -273,8 +384,23 @@ def main():
         params["K"] = math.floor(size/2) + 1
         for seed in seeds:
             params["seed"] = seed
-            test_case(params)
+            test_case(params, metrics_dict, skipped)
+            
+    ENDING_TIME = datetime.datetime.now()
+            
+    with open(f"{OUT_DIR}/metrics.json", mode='w') as f:
+        s = json.dumps(list(metrics_dict.values()), indent=2)
+        f.write(s)
 
+    with open(f"{OUT_DIR}/skipped.json", mode='w') as f:
+        s = json.dumps(skipped, indent=2)
+        f.write(s)
+
+    with open(f"{OUT_DIR}/execution.txt", mode='w') as f:
+        f.write(f"STARTING_TIME: {STARTING_TIME}\n")
+        f.write(f"ENDING_TIME: {ENDING_TIME}\n")
+        f.write(f"ELAPSED_TIME: {ENDING_TIME - STARTING_TIME}\n")
+        
     
     
 

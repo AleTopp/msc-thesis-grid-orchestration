@@ -27,7 +27,8 @@ def timeout_return_empty(seconds: int = 1*60*60):
                 max_latency = kwargs.get("max_latency", None)
                 if max_latency is None and len(args) >= 2:
                     max_latency = args[1]
-                return ([], {}, max_latency)
+                raise _TimeoutException()
+                # return ([], {}, max_latency)
             finally:
                 signal.alarm(0)
                 signal.signal(signal.SIGALRM, old_handler)
@@ -36,7 +37,7 @@ def timeout_return_empty(seconds: int = 1*60*60):
 
 #-----------------PLACEMENT ALGORITHMS------------------#
 
-@timeout_return_empty(1*60*60)
+@timeout_return_empty(10)
 def place_pdcs_greedy(G, max_latency, flag_splitting=False):
 
     # -------------------- helpers --------------------
