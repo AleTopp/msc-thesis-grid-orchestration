@@ -2,7 +2,7 @@ import json
 
 from graph_model import NODE_REDUNDANT_OF, ROLE_PMU, create_graph
 from visualizer import draw_graph, get_layout
-from placement_pdc import _TimeoutException, place_pdcs_greedy
+from placement_pdc import _TimeoutException, place_pdcs_greedy, place_pdcs_random
 from resiliency import PDC_PRIO_UNCHANGED, place_pdcs_resiliently, vec_idx_from_pmu_name
 from resiliency2 import *
 from collections import Counter
@@ -143,8 +143,20 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
         values = [edge_counts.get(edge, 0) for edge in all_edges]
         sum_x = sum(values)
         sum_x2 = sum(x * x for x in values)
-        jain_index = (sum_x ** 2) / (len(values) * sum_x2) if sum_x2 > 0 else 1.0
-        lines.append(f"Jain index (edge fairness): {round(jain_index, 4)}")
+        edge_jain_index = (sum_x ** 2) / (len(values) * sum_x2) if sum_x2 > 0 else 1.0
+        lines.append(f"Jain index (edge fairness): {round(edge_jain_index, 4)}")
+        # 4b) Jain index per la fairness dei nodi
+        all_nodes = [n for n in G.nodes()]
+        node_counts = Counter(
+            n
+            for path in (val["path"] for val in pmu_paths.values())
+            for n in path
+        )
+        values = [node_counts.get(node, 0) for node in all_nodes]
+        sum_x = sum(values)
+        sum_x2 = sum(x * x for x in values)
+        node_jain_index = (sum_x ** 2) / (len(values) * sum_x2) if sum_x2 > 0 else 1.0
+        lines.append(f"Jain index (node fairness): {round(node_jain_index, 4)}")
         # 5) Archi vs Numero di flussi di dati
         reverse_edges = {
             count: [edge for edge, value in edge_counts.items() if value == count]
@@ -162,7 +174,6 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
         if flows == 100: # Se non arrivano tutti, scartiamo il seed
             rPMUs = [LABEL_PMU(i+1) for i in range(int(R.shape[0])) if LABEL_PMU(i+1) not in ePMUs]
             
-            
             append_to_metrics(
                 size = size,
                 algorithm = name,
@@ -172,10 +183,8 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
                 execution_time = delta_t / datetime.timedelta(milliseconds=1),
                 latency_epmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in ePMUs],
                 latency_rpmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in rPMUs],
-                jain_index = jain_index,
-                # mttf = None,
-                # flows_after_node = None,
-                # flows_after_edge = None,
+                edge_jain_index = edge_jain_index,
+                node_jain_index = node_jain_index,
             )
         else:
             append_to_metrics(
@@ -275,7 +284,45 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
                 ttf = i + 1   # Se fallisce all'indice 0, il numero di failure necessari è 1
                 break
         
-        lines.append(f"Time (no. of link/edge faults) To Failure (of Observability): {ttf if not None else f">{len(crashing_seq)}"}")
+        lines.append(f"Time (no. of node/edge faults) To Failure (of Observability): {ttf if not None else f">{len(crashing_seq)}"}")
+        
+        # 3b) Quanti node fails prima di perdere osservabilità?
+        seq_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
+        nftf = None
+        for i, fail in enumerate(crashing_seq_nodes):
+            for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
+                if fail in path:
+                    seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+            
+            res = sum(
+                1
+                for group in groups_dict.values()
+                if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+            )
+            if res < len(groups_dict):
+                nftf = i + 1   # Se fallisce all'indice 0, il numero di fault necessari è 1
+                break
+        lines.append(f"Time (no. of node faults) To Failure (of Observability): {nftf if not None else f">{len(crashing_seq_nodes)}"}")
+
+        # 3c) Quanti edge fails prima di perdere osservabilità?
+        seq_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
+        eftf = None
+        for i, fail in enumerate(crashing_seq_nodes):
+            for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
+                path_edges = zip(path[:-1], path[1:])
+                if fail in path_edges or tuple(reversed(fail)) in path_edges:
+                    seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+            
+            res = sum(
+                1
+                for group in groups_dict.values()
+                if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+            )
+            if res < len(groups_dict):
+                eftf = i + 1   # Se fallisce all'indice 0, il numero di fault necessari è 1
+                break
+        lines.append(f"Time (no. of edge faults) To Failure (of Observability): {eftf if not None else f">{len(crashing_seq_edges)}"}")
+
 
         lines.append("----------------------------\n\n")
         with open(output_path, mode='+a') as f:
@@ -286,12 +333,6 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
                 size = size,
                 algorithm = name,
                 
-                # seed = seed,
-                # pdcs_num = len(pdcs),
-                # execution_time = delta_t / datetime.timedelta(milliseconds=1),
-                # latency_epmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in ePMUs],
-                # latency_rpmus = [val["delay"] for pmu, val in pmu_paths.items() if pmu in rPMUs],
-                # jain_index = jain_index,
                 ttf = ttf,
                 flows_after_node = node_res,
                 flows_after_edge = edge_res,
@@ -318,8 +359,11 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
                     "ePMUs": [],
                     "rPMUs": []
                 },
-                "jain_indexes": [],
+                "edge_jain_indexes": [],
+                "node_jain_indexes": [],
                 "times_to_failure": [],
+                "node_faults_to_failure": [],
+                "edge_faults_to_failure": [],
                 "independent_data_flows_after_1_node_fail": [],
                 "independent_data_flows_after_1_edge_fail": [],
             }
@@ -328,8 +372,11 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
             "seed": "seeds",
             "pdcs_num": "pdcs_nums",
             "execution_time": "execution_times",
-            "jain_index": "jain_indexes",
+            "edge_jain_index": "edge_jain_indexes",
+            "node_jain_index": "node_jain_indexes",
             "ttf": "times_to_failure",
+            "nftf": "node_faults_to_failure",
+            "eftf": "edge_faults_to_failure",
             "flows_after_node": "independent_data_flows_after_1_node_fail",
             "flows_after_edge": "independent_data_flows_after_1_edge_fail",
         }
@@ -349,6 +396,7 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
         "flag_splitting": all_params["flag_splitting"],
     }
     run_and_save(place_pdcs_greedy, "00_greedy", **params_greedy)
+    run_and_save(place_pdcs_random, "000_random", **params_greedy)
     
     params_resilient = {
         "max_latency": all_params["max_latency"],
@@ -378,7 +426,7 @@ def main():
     
     # Graph
     EDGE_LAT_MIN = 1
-    EDGE_LAT_MAX = 3
+    EDGE_LAT_MAX = 10
     
     # Algo
     MAX_LAT = 500
@@ -406,13 +454,13 @@ def main():
     random.seed(STARTING_SEED)
 
     # Random or specific seeds
-    # seeds = [random.randrange(0, 1000) for _ in range(10)]
-    seeds = [random.randrange(0, 1000) for _ in range(20)]
-    # seeds = [...]
+    # seeds = [random.randrange(0, 1000) for _ in range(50)]
+    seeds = [654, 114, 25, 759, 281, 250, 228, 142, 754, 104, 692, 758, 913, 558, 89, 604, 432, 32, 30, 95, 223, 238, 517, 616, 27, 574, 203, 733, 665, 718, 558, 429, 225, 459, 603, 284, 828, 890, 6, 777, 825, 163, 714, 432, 348, 284, 159, 220, 980, 781]
+    seeds = seeds[:20]
     
     # Graph sizes (num_candidates) to check
     sizes = [10, 20, 30, 40, 50]
-    # sizes = [8]
+    # sizes = [50]
     
     metrics_dict = {}
     skipped = []
@@ -421,6 +469,7 @@ def main():
         params["num_candidates"] = size
         params["cc_max_links"] = math.floor(size/2)
         params["K"] = math.floor(size/2) + 1
+        params["flag_splitting"] = params["flag_splitting"] if size < 25 else True
         for seed in seeds:
             params["seed"] = seed
             test_case(params, metrics_dict, skipped)

@@ -407,14 +407,15 @@ def place_pdcs_greedy_no_backtracking(G, max_latency, flag_splitting=False):
 
 import random
 
-@timeout_return_empty(1*60*60)
+@timeout_return_empty(10)
 def place_pdcs_random(
     G,
     max_latency,
     seed=None,
     flag_splitting=True,       
     max_tries_per_pmu=80,
-    sample_paths_per_pmu=10
+    sample_paths_per_pmu=10,
+    debug=False
 ):
 
     if seed is not None:
@@ -579,7 +580,8 @@ def place_pdcs_random(
                 break
 
         if not found_candidates:
-            print(f"⚠️ Not valid paths for {pmu} → CC (constraints max_latency/bandwidth/status/no_splitting).")
+            if debug:
+                print(f"⚠️ Not valid paths for {pmu} → CC (constraints max_latency/bandwidth/status/no_splitting).")
             continue
 
         # choose randomly among found candidates
@@ -595,13 +597,16 @@ def place_pdcs_random(
 
     # ---- report ----
     if pmu_paths:
-        print(f"\n📍 Best configuration covers {len(pmu_paths)}/{len(pmu_nodes)} PMUs (max_latency={max_latency}).")
+        if debug:
+            print(f"\n📍 Best configuration covers {len(pmu_paths)}/{len(pmu_nodes)} PMUs (max_latency={max_latency}).")
         for pmu, data in pmu_paths.items():
             path = data["path"]
             delay = data["delay"]
-            print(f"{pmu} → CC: {' → '.join(path)}, Delay = {delay:.2f} ms")
+            if debug:
+                print(f"{pmu} → CC: {' → '.join(path)}, Delay = {delay:.2f} ms")
     else:
-        print("❌ No valid configuration found (covers 0 PMUs).")
+        if debug:
+            print("❌ No valid configuration found (covers 0 PMUs).")
 
     return (pdcs, pmu_paths, max_latency)
        
