@@ -31,6 +31,8 @@ def create_graph(
     pmu_links=1,           # links from each PMU to candidates
     edge_latency_min=1,
     edge_latency_max=3,
+    node_datarate=100,
+    edge_bandwidth=400,
 ):
     if seed is not None:
         random.seed(seed)
@@ -66,7 +68,7 @@ def create_graph(
             p,
             **{
                 NODE_ROLE: ROLE_PMU,
-                NODE_DATARATE: 100, 
+                NODE_DATARATE: node_datarate, 
                 NODE_STATUS: NODE_STATUS_ONLINE
             }
         )
@@ -79,7 +81,7 @@ def create_graph(
             u, v,
             **{
                 EDGE_LATENCY: round(random.uniform(edge_latency_min, edge_latency_max), 2),
-                EDGE_BANDWIDTH: 400,
+                EDGE_BANDWIDTH: edge_bandwidth,
                 NODE_STATUS: EDGE_STATUS_ONLINE,
             }
         )

@@ -26,6 +26,8 @@ def test_case(_params: dict[str, str], metrics: dict[str, list], skipped: list[t
         cc_max_links=_params["cc_max_links"], 
         edge_latency_min=_params["edge_lat_min"], 
         edge_latency_max=_params["edge_lat_max"],
+        edge_bandwidth=_params["edge_bandwidth"],
+        node_datarate=_params["node_datarate"],
     )
     set_simple_red_role(G, R)
     
@@ -35,6 +37,8 @@ def test_case(_params: dict[str, str], metrics: dict[str, list], skipped: list[t
         "cc_max_links": _params["cc_max_links"], 
         "edge_latency_min": _params["edge_lat_min"], 
         "edge_latency_max": _params["edge_lat_max"],
+        "edge_bandwidth": _params["edge_bandwidth"],
+        "node_datarate": _params["node_datarate"],
         "N": N,
         "M": M,
         "max_latency": _params["max_latency"],
@@ -427,6 +431,8 @@ def main():
     # Graph
     EDGE_LAT_MIN = 1
     EDGE_LAT_MAX = 10
+    EDGE_BANDWIDTH = 1000
+    NODE_DATARATE = 100
     
     # Algo
     MAX_LAT = 500
@@ -442,6 +448,8 @@ def main():
         #"cc_max_links": MAX_CC_LINKS,
         "edge_lat_min": EDGE_LAT_MIN,
         "edge_lat_max": EDGE_LAT_MAX,
+        "edge_bandwidth": EDGE_BANDWIDTH,
+        "node_datarate": NODE_DATARATE,
         "max_latency": MAX_LAT,
         "flag_splitting": SPLITTING,
         "parchi_constraint": PAR_CHI,
@@ -450,13 +458,14 @@ def main():
         #"K": int(CANDIDATES/2) + 1,
         "out_dir": OUT_DIR,
     }
+    out_params = params.copy()
     
     random.seed(STARTING_SEED)
 
     # Random or specific seeds
     # seeds = [random.randrange(0, 1000) for _ in range(50)]
     seeds = [654, 114, 25, 759, 281, 250, 228, 142, 754, 104, 692, 758, 913, 558, 89, 604, 432, 32, 30, 95, 223, 238, 517, 616, 27, 574, 203, 733, 665, 718, 558, 429, 225, 459, 603, 284, 828, 890, 6, 777, 825, 163, 714, 432, 348, 284, 159, 220, 980, 781]
-    seeds = seeds[:20]
+    seeds = seeds[:]
     
     # Graph sizes (num_candidates) to check
     sizes = [10, 20, 30, 40, 50]
@@ -488,6 +497,7 @@ def main():
         f.write(f"STARTING_TIME: {STARTING_TIME}\n")
         f.write(f"ENDING_TIME: {ENDING_TIME}\n")
         f.write(f"ELAPSED_TIME: {ENDING_TIME - STARTING_TIME}\n")
+        f.write(json.dumps(out_params, indent=2))
         
     
     
