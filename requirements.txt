@@ -1,5 +1,7 @@
 networkx
-matplotlib
+matplotlib==3.6
 numpy
 pydot
 pexpect
+tikzplotlib
+webcolors

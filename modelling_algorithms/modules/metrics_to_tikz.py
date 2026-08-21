@@ -1,29 +1,25 @@
 """
 metrics_to_tikz.py
 
-Legge un file metrics.json generato da `test3.py` e produce file .tex
-contenenti grafici TikZ/PGFPlots (boxplots) per le metriche richieste.
+Legge un file metrics.json generato da `test3.py` e produce file .png
+contenenti grafici per le metriche richieste.
 
 Esempio d'uso:
 python metrics_to_tikz.py \
   --metrics runtime_results/2026-08-06/15-30-45.526540/metrics.json \
-  --outdir runtime_results/2026-08-06/15-30-45.526540/tikz
-
-Il codice produce file .tex standalone con `\begin{tikzpicture}` e
-`\begin{axis}` compatibili con `pgfplots`.
+  --outdir runtime_results/2026-08-06/15-30-45.526540
 """
 from __future__ import annotations
 
 import json
 import os
 import argparse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 from matplotlib.lines import Line2D
-
+import tikzplotlib
 
 def compute_boxplot_stats(values: List[float]) -> Optional[Dict[str, float]]:
     if not values:
@@ -44,63 +40,7 @@ def compute_boxplot_stats(values: List[float]) -> Optional[Dict[str, float]]:
         "upper_whisker": uw,
     }
 
-
-def write_grouped_boxplot_tex(filename: str, title: str, xlabels: List[str], alg_groups: Dict[str, List[List[float]]], ylabel: str, horiz_line: Optional[float] = None):
-    """
-    Scrive un file .tex con boxplot raggruppati per `xlabels` (es: dimensione) e una serie per algoritmo.
-    `alg_groups` è un dict: algoritmo -> list of groups per x (list of lists).
-    """
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    algos = list(alg_groups.keys())
-    n_algs = len(algos)
-    n_x = len(xlabels)
-
-    # compute draw offsets
-    width = 0.8 / max(1, n_algs)  # total group width approx 0.8
-    offsets = [ (i - (n_algs-1)/2.0) * width for i in range(n_algs) ]
-
-    with open(filename, "w") as f:
-        f.write("\\documentclass{standalone}\n")
-        f.write("\\usepackage{pgfplots}\n")
-        f.write("\\pgfplotsset{compat=1.17}\n")
-        f.write("\\begin{document}\n")
-        f.write("\\begin{tikzpicture}\n")
-        f.write("\\begin{axis}[\n")
-        f.write(f"  title={{{title}}},\n")
-        f.write("  ytick align=outside,\n")
-        f.write(f"  xtick={{{', '.join(str(i+1) for i in range(n_x))}}},\n")
-        f.write(f"  xticklabels={{ {', '.join('{' + s + '}' for s in xlabels)} }},\n")
-        f.write("  x tick label style={rotate=45, anchor=east},\n")
-        f.write(f"  ylabel={{{ylabel}}},\n")
-        f.write("  boxplot/draw direction=y,\n")
-        f.write("  enlarge x limits=0.5,\n")
-        f.write("  legend style={at={(0.5,-0.15)}, anchor=north, legend columns=-1},\n")
-        f.write("]\n")
-
-        # For each algorithm, for each x position, write a boxplot prepared with draw position
-        for a_idx, algo in enumerate(algos):
-            groups = alg_groups[algo]
-            for x_idx in range(n_x):
-                grp = groups[x_idx] if x_idx < len(groups) else []
-                stats = compute_boxplot_stats(grp)
-                draw_pos = x_idx + 1 + offsets[a_idx]
-                if stats is None:
-                    f.write(f"\\addplot+[boxplot prepared={{lower whisker=0,lower quartile=0,median=0,upper quartile=0,upper whisker=0}}, draw position={draw_pos}] coordinates {{}} ;\n")
-                else:
-                    f.write(f"\\addplot+[boxplot prepared={{lower whisker={stats['lower_whisker']},lower quartile={stats['lower_quartile']},median={stats['median']},upper quartile={stats['upper_quartile']},upper whisker={stats['upper_whisker']}}}, draw position={draw_pos}] coordinates {{}} ;\n")
-            # add legend entry once per algorithm
-            f.write(f"\\addlegendentry{{{algo}}}\n")
-
-        if horiz_line is not None:
-            f.write(f"\\addplot [red, thick] coordinates {{ (0,{horiz_line}) ({n_x+1},{horiz_line}) }};\n")
-            f.write(f"\\node[red,anchor=west] at (axis cs:{n_x+0.5},{horiz_line}) {{max}};\n")
-
-        f.write("\\end{axis}\n")
-        f.write("\\end{tikzpicture}\n")
-        f.write("\\end{document}\n")
-
-
-def write_grouped_boxplot_png(filename: str, title: str, xlabels: List[str], alg_groups: Dict[str, List[List[float]]], ylabel: str, horiz_line: Optional[float] = None, y_limit: Optional[float] = None):
+def write_grouped_boxplot_png(filename: str, title: str, xlabels: List[str], alg_groups: Dict[str, List[List[float]]], ylabel: str, xlabel: Optional[str] = None, horiz_line: Optional[float] = None, y_limit: Optional[float] = None, log_y: bool = False):
     """Create grouped boxplot PNG: one box per algorithm at each x (size)."""
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     algos = list(alg_groups.keys())
@@ -157,6 +97,7 @@ def write_grouped_boxplot_png(filename: str, title: str, xlabels: List[str], alg
     ax.set_xticks([i+1 for i in range(n_x)])
     ax.set_xticklabels(xlabels, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
     ax.set_title(title)
     if horiz_line is not None:
         ax.hlines(horiz_line, 0.5, n_x+0.5, colors='red', linestyles='--')
@@ -164,11 +105,15 @@ def write_grouped_boxplot_png(filename: str, title: str, xlabels: List[str], alg
     if y_limit is not None:
         ax.set_ylim(bottom=0, top=y_limit)
 
+    if log_y:
+        ax.set_yscale('log')
+
     if legend_handles:
         ax.legend(legend_handles, algos, loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=min(4, len(algos)))
 
     plt.tight_layout()
     fig.savefig(filename, dpi=200)
+    tikzplotlib.save(filename + ".tex")
     plt.close(fig)
 
 
@@ -202,7 +147,8 @@ def main():
             "pdcs_nums": [],
             "pdcs_norm": [],
             "execution_times": [],
-            "jain_indexes": [],
+            "node_jain_indexes": [],
+            "edge_jain_indexes": [],
             "ttf": [],
             "latency_ePMU": [],
             "latency_rPMU": [],
@@ -217,7 +163,8 @@ def main():
         # normalized by number of candidates (size)
         s["pdcs_norm"].extend([v / size for v in entry.get("pdcs_nums", []) if size != 0])
         s["execution_times"].extend(entry.get("execution_times", []))
-        s["jain_indexes"].extend(entry.get("jain_indexes", []))
+        s["node_jain_indexes"].extend(entry.get("node_jain_indexes", []))
+        s["edge_jain_indexes"].extend(entry.get("edge_jain_indexes", []))
         # Treat null (None) TTF as 2*size + 1 per user request
         ttf_raw = entry.get("times_to_failure", [])
         for v in ttf_raw:
@@ -273,92 +220,112 @@ def main():
     png_dir = os.path.join(outdir, "png")
     os.makedirs(png_dir, exist_ok=True)
     write_grouped_boxplot_png(os.path.join(png_dir, "latency_ePMU_by_size.png"),
-                              title="Latency ePMU by size",
+                              title="",#"Latency ePMU by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_e,
-                              ylabel="latency (ms)")
+                              ylabel="ePMU latency (ms)",
+                              xlabel="graph size (PMU no.)")
 
     alg_groups_r = collect_metric("latency_rPMU")
     write_grouped_boxplot_png(os.path.join(png_dir, "latency_rPMU_by_size.png"),
-                              title="Latency rPMU by size",
+                              title="",#"Latency rPMU by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_r,
-                              ylabel="latency (ms)")
+                              ylabel="rPMU latency (ms)",
+                              xlabel="graph size (PMU no.)")
 
     # PDC distribution raw and normalized
     alg_groups_pdcs = collect_metric("pdcs_nums")
     write_grouped_boxplot_png(os.path.join(png_dir, "pdcs_nums_by_size.png"),
-                              title="PDCs number by size",
+                              title="",#"PDCs number by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_pdcs,
-                              ylabel="# PDCs")
+                              ylabel="# of placed PDCs",
+                              xlabel="graph size (PMU no.)")
 
     alg_groups_pdcs_norm = collect_metric("pdcs_norm")
     write_grouped_boxplot_png(os.path.join(png_dir, "pdcs_norm_by_size.png"),
-                              title="PDCs / num_candidates by size",
+                              title="",#"PDCs / num_candidates by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_pdcs_norm,
-                              ylabel="PDCs / candidates")
+                              ylabel="# of placed PDCs / candidates",
+                              xlabel="graph size (PMU no.)")
 
     # execution time
     alg_groups_time = collect_metric("execution_times")
     write_grouped_boxplot_png(os.path.join(png_dir, "execution_time_by_size.png"),
-                              title="Execution time by size",
+                              title="",#"Execution time by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_time,
-                              ylabel="time (ms)")
+                              ylabel="execution time (ms)",
+                              xlabel="graph size (PMU no.)",
+                              log_y=True)
 
     # jain
-    alg_groups_jain = collect_metric("jain_indexes")
-    write_grouped_boxplot_png(os.path.join(png_dir, "jain_index_by_size.png"),
-                              title="Jain index by size",
+    alg_groups_node_jain = collect_metric("node_jain_indexes")
+    write_grouped_boxplot_png(os.path.join(png_dir, "node_jain_index_by_size.png"),
+                              title="",#"Node Jain index by size",
                               xlabels=xlabels,
-                              alg_groups=alg_groups_jain,
-                              ylabel="Jain index")
+                              alg_groups=alg_groups_node_jain,
+                              ylabel="node Jain index",
+                              xlabel="graph size (PMU no.)")
+
+    alg_groups_edge_jain = collect_metric("edge_jain_indexes")
+    write_grouped_boxplot_png(os.path.join(png_dir, "edge_jain_index_by_size.png"),
+                              title="",#"Edge Jain index by size",
+                              xlabels=xlabels,
+                              alg_groups=alg_groups_edge_jain,
+                              ylabel="edge Jain index",
+                              xlabel="graph size (PMU no.)")
 
     # time to failure
     alg_groups_ttf = collect_metric("ttf")
     # add baseline at 1 for TTF
     write_grouped_boxplot_png(os.path.join(png_dir, "ttf_by_size.png"),
-                              title="Time To Failure by size",
+                              title="",#"Time To Failure by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_ttf,
                               ylabel="# failures to lose observability",
+                              xlabel="graph size (PMU no.)",
                               horiz_line=1)
 
     # flows after 1st failure: absolute and normalized
     alg_groups_flows_abs = collect_metric("flows_after_node_abs")
     max_line = max((sz / 2 for sz in all_sizes), default=None)
     write_grouped_boxplot_png(os.path.join(png_dir, "flows_after_1node_abs_by_size.png"),
-                              title="Flows after 1 node fail (abs) by size",
+                              title="",#"Flows after 1 node fail (abs) by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_flows_abs,
-                              ylabel="# independent flows",
+                              ylabel="# independent flows after 1 node fail",
+                              xlabel="graph size (PMU no.)",
                               horiz_line=max_line)
 
     alg_groups_flows_norm = collect_metric("flows_after_node_norm")
     write_grouped_boxplot_png(os.path.join(png_dir, "flows_after_1node_pct_by_size.png"),
-                              title="Flows after 1 node fail (% of size/2) by size",
+                              title="",#"Flows after 1 node fail (% of size/2) by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_flows_norm,
-                              ylabel="% of max flows",
+                              ylabel="% of max flows after 1 node fail",
+                              xlabel="graph size (PMU no.)",
                               y_limit=105)
 
     # flows after 1 edge fail (absolute and normalized)
     alg_groups_flows_edge_abs = collect_metric("flows_after_edge_abs")
     write_grouped_boxplot_png(os.path.join(png_dir, "flows_after_1edge_abs_by_size.png"),
-                              title="Flows after 1 edge fail (abs) by size",
+                              title="",#"Flows after 1 edge fail (abs) by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_flows_edge_abs,
-                              ylabel="# independent flows",
+                              ylabel="# independent flows after 1 edge fail",
+                              xlabel="graph size (PMU no.)",
                               horiz_line=max_line)
 
     alg_groups_flows_edge_norm = collect_metric("flows_after_edge_norm")
     write_grouped_boxplot_png(os.path.join(png_dir, "flows_after_1edge_pct_by_size.png"),
-                              title="Flows after 1 edge fail (% of size/2) by size",
+                              title="",#"Flows after 1 edge fail (% of size/2) by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_flows_edge_norm,
-                              ylabel="% of max flows",
+                              ylabel="% of max flows after 1 edge fail",
+                              xlabel="graph size (PMU no.)",
                               y_limit=105)
 
     print(f"Produced TikZ files in: {outdir}")
