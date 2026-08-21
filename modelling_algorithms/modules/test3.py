@@ -478,7 +478,9 @@ def main():
         params["num_candidates"] = size
         params["cc_max_links"] = math.floor(size/2)
         params["K"] = math.floor(size/2) + 1
-        params["flag_splitting"] = params["flag_splitting"] if size < 25 else True
+        if size > 15:
+            params["flag_splitting"] = True
+
         for seed in seeds:
             params["seed"] = seed
             test_case(params, metrics_dict, skipped)

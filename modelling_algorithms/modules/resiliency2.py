@@ -3,12 +3,13 @@ This file is organized into three layers:
 
   1. Shared helpers (redundant-PMU grouping, super-source augmentation,
      weight functions, result aggregation).
-  2. Disjoint-path ALGORITHMS, one function per technique, renamed so the
+  2. Disjoint-path ALGORITHMS, one function per technique, named so the
      name reflects what the algorithm actually guarantees.
   3. One `place_pdcs_*` PIPELINE per algorithm: parse PMUs -> build
      redundant groups -> run exactly one algorithm -> return
      (pdcs, pmu_paths).
 """
+from placement_pdc import timeout_return_empty
 from resiliency import calc_path_cost, parse_pmus, vec_idx_from_pmu_name
 from graph_model import (
     EDGE_LATENCY,
@@ -684,6 +685,7 @@ def best_candidate_pair(paths_a: list[list[str]], paths_b: list[list[str]]):
 # groups from R -> run exactly ONE algorithm per group -> return
 # (pdcs, pmu_paths).
 
+@timeout_return_empty(10)
 def place_pdcs_node_disjoint(G: nx.Graph, max_latency: float, essential_pmus, R):
     _, ePMUs, _ = parse_pmus(G, essential_pmus)
     groups = build_redundant_pmu_groups(ePMUs, R)
@@ -696,6 +698,7 @@ def place_pdcs_node_disjoint(G: nx.Graph, max_latency: float, essential_pmus, R)
     return collect_pdcs_and_pmu_paths(G, all_paths)
 
 
+@timeout_return_empty(10)
 def place_pdcs_edge_disjoint(G: nx.Graph, max_latency: float, essential_pmus, R):
     _, ePMUs, _ = parse_pmus(G, essential_pmus)
     groups = build_redundant_pmu_groups(ePMUs, R)
@@ -708,6 +711,7 @@ def place_pdcs_edge_disjoint(G: nx.Graph, max_latency: float, essential_pmus, R)
     return collect_pdcs_and_pmu_paths(G, all_paths)
 
 
+@timeout_return_empty(10)
 def place_pdcs_greedy_edge_removal(G: nx.Graph, max_latency: float, essential_pmus, R):
     _, ePMUs, _ = parse_pmus(G, essential_pmus)
     groups = build_redundant_pmu_groups(ePMUs, R)
@@ -724,6 +728,7 @@ def place_pdcs_greedy_edge_removal(G: nx.Graph, max_latency: float, essential_pm
     return collect_pdcs_and_pmu_paths(G, all_paths)
 
 
+@timeout_return_empty(10)
 def place_pdcs_greedy_edge_penalty(G: nx.Graph, max_latency: float, essential_pmus, R):
     _, ePMUs, _ = parse_pmus(G, essential_pmus)
     groups = build_redundant_pmu_groups(ePMUs, R)
@@ -740,6 +745,7 @@ def place_pdcs_greedy_edge_penalty(G: nx.Graph, max_latency: float, essential_pm
     return collect_pdcs_and_pmu_paths(G, all_paths)
 
 
+@timeout_return_empty(10)
 def place_pdcs_suurballe(G: nx.Graph, max_latency: float, essential_pmus, R):
     _, ePMUs, _ = parse_pmus(G, essential_pmus)
     groups = build_redundant_pmu_groups(ePMUs, R)
@@ -756,6 +762,7 @@ def place_pdcs_suurballe(G: nx.Graph, max_latency: float, essential_pmus, R):
     return collect_pdcs_and_pmu_paths(G, all_paths)
 
 
+@timeout_return_empty(10)
 def place_pdcs_min_cost_flow_overlap(G: nx.Graph, max_latency: float, essential_pmus, R):
     """Inherently pairwise (one epmu + one redundant pmu -> two paths to
     the CC). If an essential PMU has more than one redundant PMU, only the
@@ -776,6 +783,7 @@ def place_pdcs_min_cost_flow_overlap(G: nx.Graph, max_latency: float, essential_
     return collect_pdcs_and_pmu_paths(G, all_paths)
 
 
+@timeout_return_empty(10)
 def place_pdcs_bhandari(G: nx.Graph, max_latency: float, essential_pmus, R, k: int = 2):
     _, ePMUs, _ = parse_pmus(G, essential_pmus)
     groups = build_redundant_pmu_groups(ePMUs, R)
@@ -788,6 +796,7 @@ def place_pdcs_bhandari(G: nx.Graph, max_latency: float, essential_pmus, R, k: i
     return collect_pdcs_and_pmu_paths(G, all_paths)
 
 
+@timeout_return_empty(10)
 def place_pdcs_k_shortest_candidates(G: nx.Graph, max_latency: float, essential_pmus, R, K: int = 5):
     """Limitation: with multiple redundant PMUs per
     essential PMU, only the first rPMU path is placed.

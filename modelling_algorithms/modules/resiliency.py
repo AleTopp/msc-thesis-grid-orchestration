@@ -1,5 +1,5 @@
 from graph_model import EDGE_LATENCY, LABEL_CC, NODE_LATENCY, NODE_ROLE, ROLE_CANDIDATE, ROLE_PMU
-from placement_pdc import place_pdcs_greedy
+from placement_pdc import place_pdcs_greedy, timeout_return_empty
 from operator import itemgetter
 import networkx as nx
 import numpy as np
@@ -12,6 +12,7 @@ PDC_PRIO_FALSE = 1
 PDC_PRIO_TRUE = 2
 
 
+@timeout_return_empty(10)
 def place_pdcs_resiliently(
   G: nx.Graph, 
   max_latency: float, 
