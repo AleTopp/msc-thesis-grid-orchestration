@@ -112,8 +112,17 @@ def write_grouped_boxplot_png(filename: str, title: str, xlabels: List[str], alg
         ax.legend(legend_handles, algos, loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=min(4, len(algos)))
 
     plt.tight_layout()
-    fig.savefig(filename, dpi=200)
-    tikzplotlib.save(filename + ".tex")
+    fig.savefig(filename, dpi=200, bbox_inches="tight")
+    # Keep the TikZ aspect ratio and physical size aligned with the PNG.
+    # Without these options tikzplotlib/PGFPlots uses its own default axis size.
+    code = tikzplotlib.get_tikz_code(
+        axis_width="10in",
+        axis_height="6in",
+    )
+    code = code.replace("begin{tikzpicture}", "begin{tikzpicture}[scale=\\tikzscale]", 1)
+    code = code.replace("#", "\\#")
+    with open(filename + ".tex", "w") as f:
+        f.write(code)
     plt.close(fig)
 
 
