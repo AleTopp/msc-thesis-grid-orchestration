@@ -12,7 +12,7 @@ PDC_PRIO_FALSE = 1
 PDC_PRIO_TRUE = 2
 
 
-@timeout_return_empty(10)
+@timeout_return_empty()
 def place_pdcs_resiliently(
   G: nx.Graph, 
   max_latency: float, 

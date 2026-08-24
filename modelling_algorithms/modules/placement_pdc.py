@@ -12,7 +12,7 @@ from functools import wraps
 class _TimeoutException(Exception):
     pass
 
-def timeout_return_empty(seconds: int = 1*60*60):
+def timeout_return_empty(seconds: int = 120):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -37,7 +37,7 @@ def timeout_return_empty(seconds: int = 1*60*60):
 
 #-----------------PLACEMENT ALGORITHMS------------------#
 
-@timeout_return_empty(10)
+@timeout_return_empty()
 def place_pdcs_greedy(G, max_latency, flag_splitting=False):
 
     # -------------------- helpers --------------------
@@ -407,7 +407,7 @@ def place_pdcs_greedy_no_backtracking(G, max_latency, flag_splitting=False):
 
 import random
 
-@timeout_return_empty(10)
+@timeout_return_empty()
 def place_pdcs_random(
     G,
     max_latency,
