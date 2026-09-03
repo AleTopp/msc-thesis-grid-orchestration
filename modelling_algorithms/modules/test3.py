@@ -1,5 +1,3 @@
-import json
-
 from graph_model import NODE_REDUNDANT_OF, ROLE_PMU, create_graph
 from visualizer import draw_graph, get_layout
 from placement_pdc import _TimeoutException, place_pdcs_greedy, place_pdcs_random
@@ -8,7 +6,7 @@ from resiliency2 import *
 from collections import Counter
 import networkx as nx
 import numpy as np
-import re, math, random, datetime
+import datetime, json, math, random, re
 
 G: nx.Graph = None
 
@@ -72,9 +70,9 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
     random.shuffle(crashing_seq_nodes)
     random.shuffle(crashing_seq_edges)
     crashing_seq_nodes = crashing_seq_nodes[:size]
-    crashing_seq_edges = crashing_seq_edges[:size]
+    crashing_seq_edges = crashing_seq_edges[:size*2]
     
-    crashing_seq = [*crashing_seq_nodes, *crashing_seq_edges]
+    crashing_seq = [*crashing_seq_nodes, *crashing_seq_edges[:size]]
     random.shuffle(crashing_seq)
     
     # === Helper functions ===
@@ -175,7 +173,7 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
         with open(output_path, mode='+a') as f:
             f.writelines([f"{l}\n" for l in lines])
         
-        if flows == 100: # Se non arrivano tutti, scartiamo il seed
+        if True: # (No more) flows == 100: # Se non arrivano tutti, scartiamo il seed
             rPMUs = [LABEL_PMU(i+1) for i in range(int(R.shape[0])) if LABEL_PMU(i+1) not in ePMUs]
             
             append_to_metrics(
@@ -264,67 +262,94 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
         )
         lines.append(f"% of independent data which arrives in 2+ copies: {round(100*res/len(ePMUs), 2)}%")
         
-        # 3) Quanti failure prima di perdere osservabilità (un gruppo di resilienza)? (MTTF)
+        # 3) Quanti failure prima di perdere osservabilità (un gruppo di resilienza)? (FTLO)
         lines.append(f"\nCrashing sequence: {crashing_seq}")
         seq_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
         ttf = None
-        for i, fail in enumerate(crashing_seq):
-            if type(fail) == str:
-                for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
-                    if fail in path:
-                        seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
-            else:
-                for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
-                    path_edges = zip(path[:-1], path[1:])
-                    if fail in path_edges or tuple(reversed(fail)) in path_edges:
-                        seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
-            
-            res = sum(
-                1
-                for group in groups_dict.values()
-                if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
-            )
-            if res < len(groups_dict):
-                ttf = i + 1   # Se fallisce all'indice 0, il numero di failure necessari è 1
-                break
+        
+        res = sum(
+            1
+            for group in groups_dict.values()
+            if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+        )
+        if res < len(groups_dict): # Non ho ancora fatto crashare nulla ma già non ho osservabilità
+            ttf = 0 
+        else:
+            for i, fail in enumerate(crashing_seq):
+                if type(fail) == str:
+                    for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
+                        if fail in path:
+                            seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+                else:
+                    for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
+                        path_edges = zip(path[:-1], path[1:])
+                        if fail in path_edges or tuple(reversed(fail)) in path_edges:
+                            seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+                
+                res = sum(
+                    1
+                    for group in groups_dict.values()
+                    if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+                )
+                if res < len(groups_dict):
+                    ttf = i + 1   # Se fallisce all'indice 0, il numero di failure necessari è 1
+                    break
         
         lines.append(f"Time (no. of node/edge faults) To Failure (of Observability): {ttf if not None else f">{len(crashing_seq)}"}")
         
         # 3b) Quanti node fails prima di perdere osservabilità?
         seq_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
         nftf = None
-        for i, fail in enumerate(crashing_seq_nodes):
-            for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
-                if fail in path:
-                    seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
-            
-            res = sum(
-                1
-                for group in groups_dict.values()
-                if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
-            )
-            if res < len(groups_dict):
-                nftf = i + 1   # Se fallisce all'indice 0, il numero di fault necessari è 1
-                break
+        
+        res = sum(
+            1
+            for group in groups_dict.values()
+            if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+        )
+        if res < len(groups_dict): # Non ho ancora fatto crashare nulla ma già non ho osservabilità
+            nftf = 0 
+        else:
+            for i, fail in enumerate(crashing_seq_nodes):
+                for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
+                    if fail in path:
+                        seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+                
+                res = sum(
+                    1
+                    for group in groups_dict.values()
+                    if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+                )
+                if res < len(groups_dict):
+                    nftf = i + 1   # Se fallisce all'indice 0, il numero di fault necessari è 1
+                    break
         lines.append(f"Time (no. of node faults) To Failure (of Observability): {nftf if not None else f">{len(crashing_seq_nodes)}"}")
 
         # 3c) Quanti edge fails prima di perdere osservabilità?
         seq_crash_results = {pmu: 1 for pmu in pmu_paths.keys()} # 0: dead, 1: alive
         eftf = None
-        for i, fail in enumerate(crashing_seq_nodes):
-            for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
-                path_edges = zip(path[:-1], path[1:])
-                if fail in path_edges or tuple(reversed(fail)) in path_edges:
-                    seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
-            
-            res = sum(
-                1
-                for group in groups_dict.values()
-                if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
-            )
-            if res < len(groups_dict):
-                eftf = i + 1   # Se fallisce all'indice 0, il numero di fault necessari è 1
-                break
+        
+        res = sum(
+            1
+            for group in groups_dict.values()
+            if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+        )
+        if res < len(groups_dict): # Non ho ancora fatto crashare nulla ma già non ho osservabilità
+            eftf = 0 
+        else:
+            for i, fail in enumerate(crashing_seq_edges):
+                for pmu, path in [(pmu, val["path"]) for pmu, val in pmu_paths.items()]:
+                    path_edges = zip(path[:-1], path[1:])
+                    if fail in path_edges or tuple(reversed(fail)) in path_edges:
+                        seq_crash_results[pmu] = 0   # Data from 'pmu' cannot reach CC anymore
+                
+                res = sum(
+                    1
+                    for group in groups_dict.values()
+                    if sum(seq_crash_results.get(pmu, 0) for pmu in group) > 0
+                )
+                if res < len(groups_dict):
+                    eftf = i + 1   # Se fallisce all'indice 0, il numero di fault necessari è 1
+                    break
         lines.append(f"Time (no. of edge faults) To Failure (of Observability): {eftf if not None else f">{len(crashing_seq_edges)}"}")
 
 
@@ -332,14 +357,16 @@ def exec_placing(G: nx.Graph, all_params: dict[str, str], metrics: dict[str, lis
         with open(output_path, mode='+a') as f:
             f.writelines([f"{l}\n" for l in lines])
             
-        if sum(1 for v in pmu_paths.values() if v["path"]) == R.shape[0]:
+        if True: #sum(1 for v in pmu_paths.values() if v["path"]) == R.shape[0]:
             append_to_metrics(
                 size = size,
                 algorithm = name,
                 
-                ttf = ttf,
                 flows_after_node = node_res,
                 flows_after_edge = edge_res,
+                ttf = ttf,
+                nftf = nftf,
+                eftf = eftf,
             )
             
     def append_to_metrics(**info):

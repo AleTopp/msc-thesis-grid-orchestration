@@ -40,7 +40,59 @@ def compute_boxplot_stats(values: List[float]) -> Optional[Dict[str, float]]:
         "upper_whisker": uw,
     }
 
-def write_grouped_boxplot_png(filename: str, title: str, xlabels: List[str], alg_groups: Dict[str, List[List[float]]], ylabel: str, xlabel: Optional[str] = None, horiz_line: Optional[float] = None, y_limit: Optional[float] = None, log_y: bool = False):
+def compute_group_means(alg_groups: Dict[str, List[List[float]]]) -> Dict[str, List[float]]:
+    """Compute the mean per algorithm and x-position from grouped raw observations."""
+    means: Dict[str, List[float]] = {}
+    for algo, groups in alg_groups.items():
+        avg_vals: List[float] = []
+        for group in groups:
+            if not group:
+                avg_vals.append(np.nan)
+            else:
+                avg_vals.append(float(np.mean(group)))
+        means[algo] = avg_vals
+    return means
+
+
+def write_grouped_lineplot_png(filename: str, title: str, xlabels: List[str], alg_groups: Dict[str, List[List[float]]], ylabel: str, xlabel: Optional[str] = None, y_limit: Optional[float] = None, log_y: bool = False):
+    """Create a lineplot of the mean value for each algorithm across sizes."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    algos = list(alg_groups.keys())
+    n_x = len(xlabels)
+    fig_width = max(10, n_x * 1.8)
+    fig_height = 6
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=180)
+    colors = plt.get_cmap('tab10').colors
+
+    for a_idx, algo in enumerate(algos):
+        means = compute_group_means({algo: alg_groups[algo]})[algo]
+        x = np.arange(1, n_x + 1)
+        valid = ~np.isnan(np.asarray(means, dtype=float))
+        if np.any(valid):
+            ax.plot(x[valid], np.asarray(means, dtype=float)[valid], label=algo, color=colors[a_idx % len(colors)], marker='o', linewidth=2)
+
+    ax.set_xticks(np.arange(1, n_x + 1))
+    ax.set_xticklabels(xlabels, rotation=45, ha='right')
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    if y_limit is not None:
+        ax.set_ylim(bottom=0, top=y_limit)
+    if log_y:
+        ax.set_yscale('log')
+    if algos:
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=min(4, len(algos)))
+    plt.tight_layout()
+    fig.savefig(filename, dpi=200, bbox_inches="tight")
+    code = tikzplotlib.get_tikz_code(axis_width="10in", axis_height="6in")
+    code = code.replace("begin{tikzpicture}", "begin{tikzpicture}[scale=\\tikzscale]", 1)
+    code = code.replace("#", "\\#")
+    with open(filename + ".tex", "w") as f:
+        f.write(code)
+    plt.close(fig)
+
+
+def write_grouped_boxplot_png(filename: str, title: str, xlabels: List[str], alg_groups: Dict[str, List[List[float]]], ylabel: str, xlabel: Optional[str] = None, horiz_line: Optional[float] = None, y_limit: Optional[float] = None, log_y: bool = False, mean_lines: Optional[Dict[str, List[float]]] = None):
     """Create grouped boxplot PNG: one box per algorithm at each x (size)."""
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     algos = list(alg_groups.keys())
@@ -93,6 +145,13 @@ def write_grouped_boxplot_png(filename: str, title: str, xlabels: List[str], alg
                 median.set(color='black')
             # create legend handle
             legend_handles.append(Line2D([0], [0], color=color, lw=6, alpha=0.6))
+
+        if mean_lines is not None and algo in mean_lines:
+            mean_vals = mean_lines[algo]
+            x_vals = np.arange(1, n_x + 1)
+            valid = ~np.isnan(np.asarray(mean_vals, dtype=float))
+            if np.any(valid):
+                ax.plot(x_vals[valid] + offsets[a_idx], np.asarray(mean_vals, dtype=float)[valid], color=colors[a_idx % len(colors)], linestyle='-', linewidth=2.5, marker='o', label=algo)
 
     ax.set_xticks([i+1 for i in range(n_x)])
     ax.set_xticklabels(xlabels, rotation=45, ha='right')
@@ -159,6 +218,8 @@ def main():
             "node_jain_indexes": [],
             "edge_jain_indexes": [],
             "ttf": [],
+            "node_faults_to_failure": [],
+            "edge_faults_to_failure": [],
             "latency_ePMU": [],
             "latency_rPMU": [],
             "flows_after_node_abs": [],
@@ -174,13 +235,17 @@ def main():
         s["execution_times"].extend(entry.get("execution_times", []))
         s["node_jain_indexes"].extend(entry.get("node_jain_indexes", []))
         s["edge_jain_indexes"].extend(entry.get("edge_jain_indexes", []))
-        # Treat null (None) TTF as 2*size + 1 per user request
-        ttf_raw = entry.get("times_to_failure", [])
-        for v in ttf_raw:
-            if v is None:
-                s["ttf"].append(2 * size + 1)
-            else:
-                s["ttf"].append(v)
+        # Treat null (None) TTF and fault-to-failure values as 2*size + 1 per user request
+        for key, fallback_key in [
+            ("times_to_failure", "ttf"),
+            ("node_faults_to_failure", "node_faults_to_failure"),
+            ("edge_faults_to_failure", "edge_faults_to_failure"),
+        ]:
+            for v in entry.get(key, []):
+                if v is None:
+                    s[fallback_key].append(2 * size + 1)
+                else:
+                    s[fallback_key].append(v)
         # latencies stored in a nested structure under latency_distribution
         latdist = entry.get("latency_distribution", {})
         s["latency_ePMU"].extend(latdist.get("ePMUs", []))
@@ -262,11 +327,20 @@ def main():
 
     # execution time
     alg_groups_time = collect_metric("execution_times")
+    execution_time_means = compute_group_means(alg_groups_time)
     write_grouped_boxplot_png(os.path.join(png_dir, "execution_time_by_size.png"),
                               title="",#"Execution time by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_time,
                               ylabel="execution time (ms)",
+                              xlabel="graph size (PMU no.)",
+                              log_y=True,
+                              mean_lines=execution_time_means)
+    write_grouped_lineplot_png(os.path.join(png_dir, "execution_time_mean_by_size.png"),
+                              title="",#"Mean execution time by size",
+                              xlabels=xlabels,
+                              alg_groups=alg_groups_time,
+                              ylabel="mean execution time (ms)",
                               xlabel="graph size (PMU no.)",
                               log_y=True)
 
@@ -287,14 +361,31 @@ def main():
                               ylabel="edge Jain index",
                               xlabel="graph size (PMU no.)")
 
-    # time to failure
+    # time to failure and analogous fault-to-failure metrics
     alg_groups_ttf = collect_metric("ttf")
-    # add baseline at 1 for TTF
     write_grouped_boxplot_png(os.path.join(png_dir, "ttf_by_size.png"),
                               title="",#"Time To Failure by size",
                               xlabels=xlabels,
                               alg_groups=alg_groups_ttf,
                               ylabel="# failures to lose observability",
+                              xlabel="graph size (PMU no.)",
+                              horiz_line=1)
+
+    alg_groups_node_faults_ttf = collect_metric("node_faults_to_failure")
+    write_grouped_boxplot_png(os.path.join(png_dir, "node_faults_to_failure_by_size.png"),
+                              title="",#"Node faults to failure by size",
+                              xlabels=xlabels,
+                              alg_groups=alg_groups_node_faults_ttf,
+                              ylabel="# node faults to lose observability",
+                              xlabel="graph size (PMU no.)",
+                              horiz_line=1)
+
+    alg_groups_edge_faults_ttf = collect_metric("edge_faults_to_failure")
+    write_grouped_boxplot_png(os.path.join(png_dir, "edge_faults_to_failure_by_size.png"),
+                              title="",#"Edge faults to failure by size",
+                              xlabels=xlabels,
+                              alg_groups=alg_groups_edge_faults_ttf,
+                              ylabel="# edge faults to lose observability",
                               xlabel="graph size (PMU no.)",
                               horiz_line=1)
 
